@@ -8,7 +8,23 @@ import config
 # VISUAL SOURCER
 # Downloads free vertical stock footage from Pexels API
 # Filters for dark, cinematic, high-quality clips
+#
+# BRAND RULES (from analyzing real Luminous Will videos):
+#   - Always prefer portrait/vertical (9:16) footage
+#   - Dark, moody, cinematic tone ONLY
+#   - Preferred subjects: lions, chess, suited men, dark cityscapes,
+#     solitary figures, rain, shadows, wolves
+#   - NEVER use bright, colorful, happy, sunny footage
+#   - Each clip should be unique (no reuse within same video)
+#   - Prefer HD (1920x1080) or higher resolution
 # ============================================================
+
+# --- Keywords to AVOID in search results ---
+# These don't match the dark aesthetic brand
+AVOID_KEYWORDS = [
+    "bright", "colorful", "happy", "sunny", "beach",
+    "party", "celebration", "cartoon", "comedy", "funny",
+]
 
 
 def search_and_download_videos(script_segments, output_dir):

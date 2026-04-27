@@ -31,23 +31,29 @@ VIDEO_FPS = 30
 VIDEO_FORMAT = "mp4"
 
 # --- Caption Style ---
-# White text with highlighted keyword in gold/amber
-CAPTION_FONT_SIZE = 70
+# Measured from actual Luminous Will videos:
+# Caption center sits at 83.2% from top (between 80.1% and 86.3%)
+# White text with gold/amber highlight, bold sans-serif, thin black stroke
+CAPTION_FONT_SIZE = 65       # measured from real videos
 CAPTION_COLOR = "white"
-CAPTION_HIGHLIGHT_COLOR = "#FFB800"  # gold/amber for emphasis words
+CAPTION_HIGHLIGHT_COLOR = "#E8A817"  # warm amber (matched from video frames)
 CAPTION_FONT = "Arial-Bold"
-CAPTION_POSITION = ("center", 0.82)  # 82% from top (near bottom)
+CAPTION_POSITION = ("center", 0.83)  # 83% from top (measured: 83.2%)
 CAPTION_STROKE_COLOR = "black"
-CAPTION_STROKE_WIDTH = 3
+CAPTION_STROKE_WIDTH = 2     # thinner stroke for cleaner look (matched from videos)
 
 # --- Color Grading (dark aesthetic) ---
-BRIGHTNESS_FACTOR = 0.65    # darken footage
-SATURATION_FACTOR = 0.55    # desaturate for moody look
-CONTRAST_FACTOR = 1.15      # slight contrast boost
+# Measured from actual videos:
+#   Avg brightness: 24% (V channel ~61/255) -> very dark
+#   Avg saturation: 28% (mix of B&W scenes + warm wildlife)
+#   High contrast with cool shadows and warm highlights
+BRIGHTNESS_FACTOR = 0.55    # darken footage (measured: 24% target brightness)
+SATURATION_FACTOR = 0.45    # desaturate for moody look (measured: 28% target)
+CONTRAST_FACTOR = 1.20      # stronger contrast (measured from videos)
 
 # --- Audio Settings ---
-VOICEOVER_VOLUME = 1.0      # full volume for voiceover
-MUSIC_VOLUME = 0.10         # 10% volume for background music (very low so voice is clear)
+VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant)
+MUSIC_VOLUME = 0.08         # 8% volume for background music (barely audible, voice stays clear)
 
 # --- Paths ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,8 +68,9 @@ TEMP_DIR = os.path.join(BASE_DIR, "temp")
 LOGO_DURATION = 3  # seconds to show logo at end
 
 # --- Clip Settings ---
-MIN_CLIP_DURATION = 3  # minimum seconds per visual clip
-MAX_CLIP_DURATION = 6  # maximum seconds per visual clip
+# Measured from actual videos: avg 7.2s, median 5.4s, range 1.8-23.8s
+MIN_CLIP_DURATION = 2.5  # minimum seconds per visual clip
+MAX_CLIP_DURATION = 10   # maximum seconds per visual clip
 
 # --- Pexels Search Settings ---
 PEXELS_ORIENTATION = "portrait"  # 9:16 vertical footage

@@ -135,7 +135,9 @@ def render_caption_frame(text, highlight_word, frame_width, frame_height):
     lines = wrap_text_to_lines(words, font, draw, frame_width - 100)
 
     # --- Calculate vertical position (near bottom) ---
-    line_height = font_size + 10
+    # Measured from real videos: caption center at 83.2% from top
+    # Line spacing of 8px for tighter, cleaner look
+    line_height = font_size + 8
     total_text_height = len(lines) * line_height
     y_start = int(frame_height * config.CAPTION_POSITION[1]) - total_text_height // 2
 

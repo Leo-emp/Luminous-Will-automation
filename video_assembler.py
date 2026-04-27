@@ -78,14 +78,17 @@ def assemble_video(
     final_video = final_video.with_audio(final_audio)
 
     # --- Step 8: Export ---
+    # Bitrate set to 12000k to match original video quality
+    # (measured: "quiet leader" = 10,819 kbps, "solitude" = 12,374 kbps)
+    # Using "slow" preset for better compression quality at same bitrate
     print(f"[ASSEMBLER] Exporting to: {output_path}")
     final_video.write_videofile(
         output_path,
         fps=config.VIDEO_FPS,
         codec="libx264",
         audio_codec="aac",
-        bitrate="8000k",
-        preset="medium",
+        bitrate="12000k",
+        preset="slow",
         threads=4,
     )
 
@@ -310,8 +313,8 @@ def mix_audio(voiceover, music_path, voiceover_duration):
             # Lower volume significantly so voiceover is clear
             music = music.with_volume_scaled(config.MUSIC_VOLUME)
 
-            # Fade in/out the music
-            music = music.audio_fadein(2.0).audio_fadeout(2.0)
+            # Fade in/out the music (3s fade out for smoother ending)
+            music = music.audio_fadein(2.0).audio_fadeout(3.0)
 
             audio_layers.append(music)
             print(f"[ASSEMBLER] Background music added at {config.MUSIC_VOLUME*100:.0f}% volume")

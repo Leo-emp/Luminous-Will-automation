@@ -8,6 +8,7 @@ from voiceover import generate_voiceover, get_audio_duration
 from visuals import search_and_download_videos
 from captions import create_caption_clips
 from video_assembler import assemble_video
+from brand_reference import validate_references, VIDEO_SPECS
 
 # ============================================================
 # LUMINOUS WILL - AUTOMATED VIDEO PIPELINE
@@ -87,11 +88,18 @@ def run_pipeline(topic=None):
     print("=" * 60)
 
     # =====================================================
-    # STEP 1: VALIDATE SETUP
+    # STEP 1: VALIDATE SETUP + BRAND REFERENCES
     # =====================================================
     print("\n[STEP 1/6] Validating setup...")
     if not validate_setup():
         return None
+
+    # --- Check brand reference frames ---
+    # These are extracted from real Luminous Will videos
+    # and used to calibrate quality settings
+    validate_references()
+    print(f"[BRAND] Target quality: {VIDEO_SPECS['bitrate']} bitrate, "
+          f"{VIDEO_SPECS['width']}x{VIDEO_SPECS['height']} @ {VIDEO_SPECS['fps']}fps")
 
     # =====================================================
     # STEP 2: GENERATE SCRIPT
