@@ -1,0 +1,19 @@
+# ============================================================
+# REQUIRED PYTHON PACKAGES
+# Install with: pip install -r requirements.txt
+# ============================================================
+
+# --- Video editing and assembly ---
+moviepy>=2.0.0          # video compositing, cutting, effects, export
+
+# --- Image processing ---
+Pillow>=10.0.0          # caption rendering, logo processing
+opencv-python-headless  # video frame extraction, image processing
+numpy                   # array operations for color grading
+
+# --- Text-to-Speech (ElevenLabs) ---
+elevenlabs>=1.0.0       # voiceover generation with word timestamps
+requests                # API calls to ElevenLabs and Pexels
+
+# --- Environment variables ---
+python-dotenv           # loads API keys from .env file
