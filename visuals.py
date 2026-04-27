@@ -13,7 +13,8 @@ import config
 #   - Always prefer portrait/vertical (9:16) footage
 #   - Dark, moody, cinematic tone ONLY
 #   - Preferred subjects: lions, chess, suited men, dark cityscapes,
-#     solitary figures, rain, shadows, wolves
+#     solitary figures, rain, shadows, wolves, gym, boxing, running,
+#     modern city architecture
 #   - NEVER use bright, colorful, happy, sunny footage
 #   - Each clip should be unique (no reuse within same video)
 #   - Prefer HD (1920x1080) or higher resolution
@@ -68,8 +69,13 @@ def search_and_download_videos(script_segments, output_dir):
             if video_path:
                 downloaded_clips.append(video_path)
             else:
-                # Last resort fallback with generic dark aesthetic keywords
-                for fallback in ["dark cinematic", "dark aesthetic", "night city", "dark moody"]:
+                # Last resort fallback with on-brand dark aesthetic keywords
+                # Includes gym, boxing, running, architecture as approved subjects
+                for fallback in [
+                    "dark cinematic", "dark aesthetic", "night city", "dark moody",
+                    "gym dark", "boxing dark", "running dark", "modern architecture dark",
+                    "lion dark", "chess dark",
+                ]:
                     video_path = search_and_download_one(
                         fallback, output_dir, i, used_video_ids
                     )

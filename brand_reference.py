@@ -146,10 +146,11 @@ AUDIO_SPECS = {
     "voiceover_volume": 1.0,         # full volume, never reduced
 
     # --- Background music ---
-    # Very subtle, almost ambient
-    # Dramatic/cinematic strings or piano
-    # Never competes with the voiceover
-    "music_volume": 0.08,            # 8% volume (was 10%, slightly lower)
+    # Loud enough to feel encouraging and motivational
+    # Dramatic/cinematic strings, piano, or epic orchestral
+    # NEVER competes with the voiceover - voice is always crystal clear
+    # Voice is ~7x louder than music at this setting
+    "music_volume": 0.15,            # 15% volume - encouraging but voice stays clear
     "music_fade_in": 2.0,            # 2 second fade in
     "music_fade_out": 3.0,           # 3 second fade out (longer for smooth ending)
 
@@ -188,6 +189,10 @@ VISUAL_STRATEGY = {
         "wolf dark",                 # lone wolf mentality
         "mountain dark sky",         # achievement/solitude
         "ocean dark waves",          # emotional depth
+        "gym dark aesthetic",        # discipline/strength
+        "boxing dark cinematic",     # fighting spirit/power
+        "running dark cinematic",    # discipline/endurance
+        "modern city architecture",  # ambition/modern power
     ],
 
     # --- Footage to AVOID ---

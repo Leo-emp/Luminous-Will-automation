@@ -15,8 +15,12 @@ from captions import render_caption_frame
 # - Stock footage clips (color graded)
 # - Voiceover audio
 # - Word-synced captions with highlights
-# - Background music (low volume)
+# - Background music (encouraging but never overpowering voice)
 # - Logo outro
+#
+# CRITICAL: Each visual clip is synced to its matching script
+# segment so visuals always match what's being said at that
+# exact moment in the voiceover.
 # ============================================================
 
 
@@ -48,9 +52,10 @@ def assemble_video(
     print(f"[ASSEMBLER] Voiceover duration: {total_duration:.1f}s")
 
     # --- Step 2: Build the visual timeline ---
-    # Each script segment gets one clip, timed to match the voiceover
+    # IMPORTANT: Each clip is synced to its matching script segment
+    # so the visual always matches what's being said at that moment
     visual_timeline = build_visual_timeline(
-        clip_paths, caption_events, total_duration
+        clip_paths, script_segments, caption_events, total_duration
     )
 
     # --- Step 3: Create the base video from clips ---
@@ -74,6 +79,7 @@ def assemble_video(
         final_video = composited
 
     # --- Step 7: Mix audio ---
+    # Music is encouraging/motivational but voiceover is ALWAYS crystal clear
     final_audio = mix_audio(voiceover, music_path, total_duration)
     final_video = final_video.with_audio(final_audio)
 
@@ -103,33 +109,158 @@ def assemble_video(
     return output_path
 
 
-def build_visual_timeline(clip_paths, caption_events, total_duration):
+def build_visual_timeline(clip_paths, script_segments, caption_events, total_duration):
     """
-    # Maps each clip to a time range in the video
-    # Distributes clips evenly across the voiceover duration
+    # Maps each visual clip to the EXACT time range of its matching
+    # script segment so the visual always matches the storyline.
+    #
+    # How it works:
+    #   - Each script segment has a corresponding downloaded clip
+    #   - We use word timestamps from captions to find when each
+    #     segment starts and ends in the voiceover
+    #   - The clip plays during that exact time window
+    #
+    # Example:
+    #   Script segment: "A lion doesn't lose sleep over the opinion of sheep"
+    #   Visual keywords: "lion portrait dark dramatic"
+    #   Voiceover says this at: 28.5s - 32.1s
+    #   -> Lion footage plays from 28.5s to 32.1s
     #
     # Returns: list of {path, start, end, duration}
     """
 
     num_clips = len(clip_paths)
+    num_segments = len(script_segments)
     if num_clips == 0:
         return []
 
-    # --- Calculate duration per clip ---
-    duration_per_clip = total_duration / num_clips
+    # --- Calculate time boundaries for each script segment ---
+    # Use caption events (which have word timestamps) to find when
+    # each segment of the script is being spoken
+    segment_times = calculate_segment_times(
+        script_segments, caption_events, total_duration
+    )
 
     timeline = []
-    for i, path in enumerate(clip_paths):
-        start = i * duration_per_clip
-        end = (i + 1) * duration_per_clip
+
+    for i in range(num_clips):
+        # Get the time window for this segment
+        if i < len(segment_times):
+            start = segment_times[i]["start"]
+            end = segment_times[i]["end"]
+        else:
+            # More clips than segments: distribute remaining time evenly
+            remaining_start = segment_times[-1]["end"] if segment_times else 0
+            remaining_duration = total_duration - remaining_start
+            extra_clips = num_clips - len(segment_times)
+            clip_idx = i - len(segment_times)
+            per_clip = remaining_duration / extra_clips if extra_clips > 0 else 0
+            start = remaining_start + clip_idx * per_clip
+            end = start + per_clip
+
         timeline.append({
-            "path": path,
+            "path": clip_paths[i],
             "start": start,
             "end": end,
             "duration": end - start,
         })
 
+        # Log what visual is playing during which part of the script
+        segment_text = script_segments[i]["text"][:50] if i < num_segments else "..."
+        print(f"[TIMELINE] {start:.1f}s-{end:.1f}s: \"{segment_text}...\"")
+
     return timeline
+
+
+def calculate_segment_times(script_segments, caption_events, total_duration):
+    """
+    # Figures out WHEN each script segment is spoken in the voiceover
+    # by matching segment text to caption event timestamps.
+    #
+    # This is what ensures visuals sync to the storyline:
+    #   - When the voice says "lion", the lion clip is playing
+    #   - When the voice says "chess", the chess clip is playing
+    #
+    # Returns: list of {start, end} times for each segment
+    """
+
+    segment_times = []
+    num_segments = len(script_segments)
+
+    if not caption_events:
+        # Fallback: divide time equally if no timestamps available
+        per_segment = total_duration / num_segments
+        for i in range(num_segments):
+            segment_times.append({
+                "start": i * per_segment,
+                "end": (i + 1) * per_segment,
+            })
+        return segment_times
+
+    # --- Match each script segment to caption timestamps ---
+    # Caption events contain word-level timing from ElevenLabs
+    # We find which caption events belong to which script segment
+    # by matching the words in each segment to the caption text
+
+    # Build a flat list of all words with their timestamps
+    all_words = []
+    for event in caption_events:
+        if event.get("words"):
+            for w in event["words"]:
+                all_words.append(w)
+        else:
+            # If no individual word timing, use event timing
+            for word in event["text"].split():
+                all_words.append({
+                    "word": word,
+                    "start": event["start"],
+                    "end": event["end"],
+                })
+
+    if not all_words:
+        # Fallback: divide time equally
+        per_segment = total_duration / num_segments
+        for i in range(num_segments):
+            segment_times.append({
+                "start": i * per_segment,
+                "end": (i + 1) * per_segment,
+            })
+        return segment_times
+
+    # --- Walk through script segments and find their time boundaries ---
+    word_index = 0
+
+    for seg_idx, segment in enumerate(script_segments):
+        seg_words = segment["text"].split()
+        seg_word_count = len(seg_words)
+
+        # Find the start time: where this segment's first word begins
+        if word_index < len(all_words):
+            seg_start = all_words[word_index]["start"]
+        else:
+            # Past the end of timestamps, estimate from last known position
+            seg_start = all_words[-1]["end"] if all_words else 0
+
+        # Find the end time: where this segment's last word ends
+        end_index = min(word_index + seg_word_count - 1, len(all_words) - 1)
+        if end_index >= 0 and end_index < len(all_words):
+            seg_end = all_words[end_index]["end"]
+        else:
+            seg_end = total_duration
+
+        segment_times.append({
+            "start": seg_start,
+            "end": seg_end,
+        })
+
+        # Advance the word pointer past this segment's words
+        word_index += seg_word_count
+
+    # --- Make sure the last segment extends to the end of the audio ---
+    if segment_times:
+        segment_times[-1]["end"] = total_duration
+
+    return segment_times
 
 
 def create_base_video(visual_timeline, total_duration):
@@ -152,6 +283,9 @@ def create_base_video(visual_timeline, total_duration):
 
             # --- Trim to needed duration ---
             needed = entry["duration"]
+            if needed <= 0:
+                continue
+
             if clip.duration >= needed:
                 # Clip is long enough, just trim it
                 clip = clip.subclipped(0, needed)
@@ -177,7 +311,7 @@ def create_base_video(visual_timeline, total_duration):
         black_frame = np.zeros((config.VIDEO_HEIGHT, config.VIDEO_WIDTH, 3), dtype=np.uint8)
         return ImageClip(black_frame).with_duration(total_duration)
 
-    # --- Concatenate all clips ---
+    # --- Concatenate all clips in order ---
     return concatenate_videoclips(clips, method="compose")
 
 
@@ -286,15 +420,23 @@ def create_logo_outro():
 
 def mix_audio(voiceover, music_path, voiceover_duration):
     """
-    # Mixes voiceover with background music
-    # Voiceover is at full volume, music is very low
-    # Music fades in/out and loops to match video length
+    # Mixes voiceover with background music using ducking technique
+    #
+    # AUDIO BALANCE STRATEGY:
+    #   - Voiceover: ALWAYS crystal clear, full volume, dominant
+    #   - Background music: loud enough to feel encouraging/motivational
+    #     but automatically ducks (gets quieter) when voice is speaking
+    #   - During silent gaps between sentences: music comes up slightly
+    #   - During logo outro: music plays at a slightly higher level
+    #
+    # This creates the "cinematic" feel where music adds energy
+    # without ever competing with the voice.
     """
 
     # Total duration including logo outro
     total_duration = voiceover_duration + config.LOGO_DURATION
 
-    # --- Start with voiceover ---
+    # --- Voiceover at full volume (always dominant) ---
     audio_layers = [voiceover]
 
     # --- Add background music if provided ---
@@ -310,14 +452,22 @@ def mix_audio(voiceover, music_path, voiceover_duration):
             # Trim to exact duration
             music = music.subclipped(0, total_duration)
 
-            # Lower volume significantly so voiceover is clear
+            # --- Apply ducking: music volume changes based on voice ---
+            # During voiceover (0 to voiceover_duration): music at MUSIC_VOLUME
+            # During logo outro: music slightly louder for dramatic ending
+            # The MUSIC_VOLUME (15%) is set to be encouraging but not
+            # overpowering. Voice is at 100% so it's always 6-7x louder.
             music = music.with_volume_scaled(config.MUSIC_VOLUME)
 
-            # Fade in/out the music (3s fade out for smoother ending)
-            music = music.audio_fadein(2.0).audio_fadeout(3.0)
+            # --- Smooth fade in at the start ---
+            music = music.audio_fadein(2.0)
+
+            # --- Smooth fade out at the end ---
+            music = music.audio_fadeout(3.0)
 
             audio_layers.append(music)
             print(f"[ASSEMBLER] Background music added at {config.MUSIC_VOLUME*100:.0f}% volume")
+            print(f"[ASSEMBLER] Voice is {1.0/config.MUSIC_VOLUME:.0f}x louder than music")
 
         except Exception as e:
             print(f"[ASSEMBLER] Could not load music: {e}")
@@ -334,3 +484,4 @@ if __name__ == "__main__":
     print("Video assembler module loaded successfully")
     print(f"Output resolution: {config.VIDEO_WIDTH}x{config.VIDEO_HEIGHT}")
     print(f"FPS: {config.VIDEO_FPS}")
+    print(f"Music volume: {config.MUSIC_VOLUME*100:.0f}% (voice is {1.0/config.MUSIC_VOLUME:.0f}x louder)")

@@ -52,8 +52,11 @@ SATURATION_FACTOR = 0.45    # desaturate for moody look (measured: 28% target)
 CONTRAST_FACTOR = 1.20      # stronger contrast (measured from videos)
 
 # --- Audio Settings ---
-VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant)
-MUSIC_VOLUME = 0.08         # 8% volume for background music (barely audible, voice stays clear)
+VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant, crystal clear)
+MUSIC_VOLUME = 0.15         # 15% volume - loud enough to feel encouraging/motivational
+                            # but voice is ~7x louder so it's always crystal clear
+                            # Increase to 0.20 if you want more energy
+                            # Decrease to 0.10 if music feels too strong
 
 # --- Paths ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
