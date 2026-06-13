@@ -9,6 +9,7 @@ from visuals import search_and_download_videos
 from captions import create_caption_clips
 from video_assembler import assemble_video
 from brand_reference import validate_references, VIDEO_SPECS
+from music import download_background_music
 
 # ============================================================
 # LUMINOUS WILL - AUTOMATED VIDEO PIPELINE
@@ -76,90 +77,81 @@ def find_background_music():
     return None
 
 
-def run_pipeline(topic=None):
+def run_pipeline(topic=None, video_format=None):
     """
     # Main pipeline: runs all steps in sequence
-    # Creates one complete video from start to finish
+    # Accepts video_format for dual-format support
     """
+
+    from config import VideoFormat, get_format_profile
+
+    if video_format is None:
+        video_format = VideoFormat.VERTICAL_SHORT
+
+    profile = get_format_profile(video_format)
 
     start_time = time.time()
     print("\n" + "=" * 60)
     print("  LUMINOUS WILL - VIDEO PIPELINE")
+    print(f"  Format: {video_format.value} ({profile['width']}x{profile['height']})")
     print("=" * 60)
 
-    # =====================================================
-    # STEP 1: VALIDATE SETUP + BRAND REFERENCES
-    # =====================================================
+    # --- STEP 1: VALIDATE ---
     print("\n[STEP 1/6] Validating setup...")
     if not validate_setup():
         return None
 
-    # --- Check brand reference frames ---
-    # These are extracted from real Luminous Will videos
-    # and used to calibrate quality settings
     validate_references()
-    print(f"[BRAND] Target quality: {VIDEO_SPECS['bitrate']} bitrate, "
-          f"{VIDEO_SPECS['width']}x{VIDEO_SPECS['height']} @ {VIDEO_SPECS['fps']}fps")
 
-    # =====================================================
-    # STEP 2: GENERATE SCRIPT
-    # =====================================================
+    # --- STEP 2: GENERATE SCRIPT ---
     print("\n[STEP 2/6] Generating script...")
-    script_segments, topic = generate_script(topic)
+    script_segments, topic = generate_script(topic, video_format=video_format)
     full_script = get_script_text(script_segments)
     print(f"[SCRIPT] Topic: {topic}")
     print(f"[SCRIPT] Segments: {len(script_segments)}")
     print(f"[SCRIPT] Full text:\n  {full_script[:200]}...")
 
-    # --- Create a unique output name based on topic ---
     safe_topic = topic.replace(" ", "_").replace("'", "")[:50]
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     video_name = f"{safe_topic}_{timestamp}"
-
-    # --- Create temp directory for this video ---
     video_temp = os.path.join(config.TEMP_DIR, video_name)
     os.makedirs(video_temp, exist_ok=True)
 
-    # =====================================================
-    # STEP 3: GENERATE VOICEOVER
-    # =====================================================
+    # --- STEP 3: GENERATE VOICEOVER ---
     print("\n[STEP 3/6] Generating voiceover...")
     voiceover_path = os.path.join(video_temp, "voiceover.mp3")
-    word_timestamps = generate_voiceover(full_script, voiceover_path)
+    word_timestamps = generate_voiceover(full_script, voiceover_path, profile=profile)
     audio_duration = get_audio_duration(voiceover_path)
     print(f"[VOICEOVER] Duration: {audio_duration:.1f}s")
 
-    # =====================================================
-    # STEP 4: DOWNLOAD STOCK FOOTAGE
-    # =====================================================
+    # --- STEP 4: DOWNLOAD STOCK FOOTAGE ---
     print("\n[STEP 4/6] Downloading stock footage...")
     clips_dir = os.path.join(video_temp, "clips")
-    clip_paths = search_and_download_videos(script_segments, clips_dir)
+    clip_paths = search_and_download_videos(script_segments, clips_dir, profile=profile)
 
     if not clip_paths:
         print("[ERROR] No footage downloaded. Check your Pexels API key.")
         return None
 
-    # =====================================================
-    # STEP 5: BUILD CAPTIONS
-    # =====================================================
+    # --- STEP 5: BUILD CAPTIONS ---
     print("\n[STEP 5/6] Building word-synced captions...")
     caption_events = create_caption_clips(
         word_timestamps, script_segments, audio_duration
     )
 
-    # =====================================================
-    # STEP 6: ASSEMBLE FINAL VIDEO
-    # =====================================================
+    # --- STEP 6: ASSEMBLE FINAL VIDEO ---
     print("\n[STEP 6/6] Assembling final video...")
     output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}.mp4")
     music_path = find_background_music()
 
+    if not music_path:
+        print("[MUSIC] No local music found, downloading from Pixabay...")
+        music_path = download_background_music()
+
     if music_path:
         print(f"[MUSIC] Using: {os.path.basename(music_path)}")
     else:
-        print("[MUSIC] No background music found in assets/music/")
-        print("[MUSIC] Add a .mp3 file to assets/music/ for background music")
+        print("[MUSIC] No background music available - video will have voiceover only")
 
     assemble_video(
         clip_paths=clip_paths,
@@ -168,22 +160,18 @@ def run_pipeline(topic=None):
         script_segments=script_segments,
         music_path=music_path,
         output_path=output_path,
+        video_format=video_format,
     )
 
-    # =====================================================
-    # DONE
-    # =====================================================
+    # --- DONE ---
     elapsed = time.time() - start_time
     print("\n" + "=" * 60)
     print(f"  VIDEO COMPLETE!")
+    print(f"  Format: {video_format.value}")
     print(f"  Topic: {topic}")
     print(f"  Output: {output_path}")
     print(f"  Time: {elapsed:.0f} seconds")
     print("=" * 60 + "\n")
-
-    # --- Clean up temp files (optional) ---
-    # Uncomment the line below to auto-delete temp files after export
-    # shutil.rmtree(video_temp, ignore_errors=True)
 
     return output_path
 
@@ -203,26 +191,18 @@ def list_topics():
 # ENTRY POINT
 # ============================================================
 if __name__ == "__main__":
+    import argparse
 
-    # --- Parse command line arguments ---
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
+    parser = argparse.ArgumentParser(description="Luminous Will Video Pipeline")
+    parser.add_argument("topic", nargs="?", default=None, help="Video topic")
+    parser.add_argument("--format", choices=["short", "long"], default="short",
+                        help="Video format: short (9:16, 60-90s) or long (16:9, 8-12min)")
+    parser.add_argument("--list", action="store_true", help="List available topics")
+    args = parser.parse_args()
 
-        if arg == "--list":
-            # Show all available topics
-            list_topics()
-
-        elif arg == "--help":
-            print("\nLuminous Will Video Pipeline")
-            print("Usage:")
-            print("  python main.py                  -> random topic")
-            print("  python main.py \"topic\"           -> specific topic")
-            print("  python main.py --list            -> list topics")
-            print("  python main.py --help            -> this help")
-
-        else:
-            # Use the provided topic
-            run_pipeline(topic=arg)
+    if args.list:
+        list_topics()
     else:
-        # Random topic
-        run_pipeline()
+        from config import VideoFormat
+        fmt = VideoFormat.HORIZONTAL_LONG if args.format == "long" else VideoFormat.VERTICAL_SHORT
+        run_pipeline(topic=args.topic, video_format=fmt)
