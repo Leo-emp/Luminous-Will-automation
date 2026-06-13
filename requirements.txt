@@ -17,3 +17,6 @@ requests                # API calls to ElevenLabs and Pexels
 
 # --- Environment variables ---
 python-dotenv           # loads API keys from .env file
+
+# --- AI Script Generation (Gemini) ---
+google-generativeai>=0.8.0  # Gemini API for long-form script generation

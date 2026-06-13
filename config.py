@@ -1,5 +1,6 @@
 import os
 from dotenv import load_dotenv
+from enum import Enum
 
 # ============================================================
 # CONFIGURATION FILE FOR LUMINOUS WILL VIDEO PIPELINE
@@ -9,20 +10,84 @@ from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 # --- API Keys (set these in .env file) ---
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
-PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "").strip()
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "").strip()
+PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY", "").strip()
+FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY", "").strip()
+
+# --- Gemini API Key ---
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+# --- Video Format System ---
+# Each format has its own resolution, bitrate, caption style, and search orientation
+class VideoFormat(Enum):
+    VERTICAL_SHORT = "short"    # 9:16, 60-90s, template scripts
+    HORIZONTAL_LONG = "long"    # 16:9, 8-12 min, Gemini scripts
+
+# --- Format Profiles ---
+# Each profile contains ALL format-specific settings
+FORMAT_PROFILES = {
+    VideoFormat.VERTICAL_SHORT: {
+        "width": 1080,
+        "height": 1920,
+        "fps": 30,
+        "bitrate": "12000k",
+        "pexels_orientation": "portrait",
+        "duration_range": (60, 90),
+        "caption_font_size": 65,
+        "caption_position_y": 0.83,
+        "caption_stroke_width": 2,
+        "brightness_factor": 0.55,
+        "saturation_factor": 0.45,
+        "music_volume": 0.32,
+        "music_mode": "flat",
+        "transition_type": "cut",
+        "transition_duration": 0.0,
+        "clip_duration_range": (2.5, 10),
+        "voice_stability": 0.62,
+        "script_source": "template",
+    },
+    VideoFormat.HORIZONTAL_LONG: {
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "bitrate": "15000k",
+        "pexels_orientation": "landscape",
+        "duration_range": (480, 720),
+        "caption_font_size": 48,
+        "caption_position_y": 0.88,
+        "caption_stroke_width": 3,
+        "brightness_factor": 0.60,
+        "saturation_factor": 0.45,
+        "music_volume": 0.25,
+        "music_mode": "ducking",
+        "music_volume_high": 0.45,
+        "music_duck_ramp": 0.3,
+        "transition_type": "crossfade",
+        "transition_duration": 0.5,
+        "clip_duration_range": (8, 15),
+        "voice_stability": 0.55,
+        "script_source": "gemini",
+    },
+}
+
+
+def get_format_profile(fmt: VideoFormat) -> dict:
+    # Returns the full settings profile for a given format
+    return FORMAT_PROFILES[fmt]
+
 
 # --- ElevenLabs Voice Settings ---
-# Voice: Adam - Deep English Story Voice
+# Voice: Adam - Deep English Story Voice (free plan compatible)
 ELEVENLABS_VOICE_ID = "pNInz6obpgDQGcFmaJgB"  # Adam voice ID
 ELEVENLABS_MODEL_ID = "eleven_multilingual_v2"
 VOICE_SETTINGS = {
-    "stability": 0.50,           # 50% stability
-    "similarity_boost": 0.75,    # 75% similarity boost
-    "style": 0.04,               # 4% style
-    "use_speaker_boost": True,   # speaker boost enabled
+    "stability": 0.62,           # 62% stability - controlled = authoritative tone
+    "similarity_boost": 0.80,    # 80% similarity boost - consistent deep voice
+    "style": 0.0,                # 0% style - no variation = commanding delivery
+    "use_speaker_boost": True,   # speaker boost enabled - deeper resonance
 }
-VOICE_SPEED = 0.83  # speed 0.83
+VOICE_SPEED = 0.83  # matched to user's preferred pace
 
 # --- Video Settings ---
 VIDEO_WIDTH = 1080
@@ -53,10 +118,9 @@ CONTRAST_FACTOR = 1.20      # stronger contrast (measured from videos)
 
 # --- Audio Settings ---
 VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant, crystal clear)
-MUSIC_VOLUME = 0.15         # 15% volume - loud enough to feel encouraging/motivational
-                            # but voice is ~7x louder so it's always crystal clear
-                            # Increase to 0.20 if you want more energy
-                            # Decrease to 0.10 if music feels too strong
+MUSIC_VOLUME = 0.32         # 32% volume - intense motivational feel, voice still dominant
+                            # voice is ~3x louder so it stays crystal clear
+                            # music hits hard for instant motivation energy
 
 # --- Paths ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -112,4 +176,6 @@ TRENDING_TOPICS = [
     "Why you attract toxic people",
     "The psychology of winning alone",
     "Why most people will never succeed",
+    "The hidden envy around you",
+    "Comfort is killing your potential",
 ]
