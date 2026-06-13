@@ -24,6 +24,9 @@ clips/
 Thumbs.db
 desktop.ini
 
+# --- Queue data (generated, contains local paths) ---
+queue.json
+
 # --- IDE files ---
 .vscode/
 .idea/
