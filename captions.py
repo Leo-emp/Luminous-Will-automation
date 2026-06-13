@@ -98,11 +98,21 @@ def create_fallback_captions(script_segments, video_duration):
     return events
 
 
-def render_caption_frame(text, highlight_word, frame_width, frame_height):
+def render_caption_frame(text, highlight_word, frame_width, frame_height,
+                         font_size=None, position_y=None, stroke_width=None):
     """
     # Renders a single caption frame as a numpy array (RGBA)
     # White text with gold highlight on the emphasis word
     # Black stroke/outline for readability over any background
+    #
+    # Args:
+    #   text: caption text to render
+    #   highlight_word: word to highlight in gold (or None)
+    #   frame_width: output frame width in pixels
+    #   frame_height: output frame height in pixels
+    #   font_size: optional override for caption font size (default: config.CAPTION_FONT_SIZE)
+    #   position_y: optional override for caption vertical position ratio (default: config.CAPTION_POSITION[1])
+    #   stroke_width: optional override for text stroke width (default: config.CAPTION_STROKE_WIDTH)
     #
     # Returns: numpy array (H, W, 4) RGBA
     """
@@ -112,15 +122,18 @@ def render_caption_frame(text, highlight_word, frame_width, frame_height):
     draw = ImageDraw.Draw(img)
 
     # --- Load font ---
-    font_size = config.CAPTION_FONT_SIZE
+    # Use optional overrides or fall back to config defaults
+    _font_size = font_size or config.CAPTION_FONT_SIZE
+    _position_y = position_y or config.CAPTION_POSITION[1]
+    _stroke_width = stroke_width or config.CAPTION_STROKE_WIDTH
     try:
-        font = ImageFont.truetype("arialbd.ttf", font_size)
+        font = ImageFont.truetype("arialbd.ttf", _font_size)
     except OSError:
         try:
-            font = ImageFont.truetype("Arial Bold.ttf", font_size)
+            font = ImageFont.truetype("Arial Bold.ttf", _font_size)
         except OSError:
             try:
-                font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", font_size)
+                font = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", _font_size)
             except OSError:
                 font = ImageFont.load_default()
                 print("[CAPTIONS] WARNING: Using default font (Arial Bold not found)")
@@ -137,9 +150,9 @@ def render_caption_frame(text, highlight_word, frame_width, frame_height):
     # --- Calculate vertical position (near bottom) ---
     # Measured from real videos: caption center at 83.2% from top
     # Line spacing of 8px for tighter, cleaner look
-    line_height = font_size + 8
+    line_height = _font_size + 8
     total_text_height = len(lines) * line_height
-    y_start = int(frame_height * config.CAPTION_POSITION[1]) - total_text_height // 2
+    y_start = int(frame_height * _position_y) - total_text_height // 2
 
     # --- Draw each line ---
     for line_idx, line_words in enumerate(lines):
@@ -162,9 +175,8 @@ def render_caption_frame(text, highlight_word, frame_width, frame_height):
             color = config.CAPTION_HIGHLIGHT_COLOR if is_highlight else config.CAPTION_COLOR
 
             # Draw black outline/stroke for readability
-            stroke_w = config.CAPTION_STROKE_WIDTH
-            for dx in range(-stroke_w, stroke_w + 1):
-                for dy in range(-stroke_w, stroke_w + 1):
+            for dx in range(-_stroke_width, _stroke_width + 1):
+                for dy in range(-_stroke_width, _stroke_width + 1):
                     if dx != 0 or dy != 0:
                         draw.text(
                             (x + dx, y + dy), word,
