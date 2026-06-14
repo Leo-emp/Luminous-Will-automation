@@ -15,6 +15,7 @@ temp/
 
 # --- Output videos (too large for GitHub) ---
 output/
+*.mp4
 
 # --- Downloaded stock footage clips ---
 clips/
