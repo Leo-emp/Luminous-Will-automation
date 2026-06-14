@@ -9,7 +9,7 @@ from visuals import search_and_download_videos
 from captions import create_caption_clips
 from video_assembler import assemble_video
 from brand_reference import validate_references, VIDEO_SPECS
-from music import download_background_music
+from music import select_music
 
 # ============================================================
 # LUMINOUS WILL - AUTOMATED VIDEO PIPELINE
@@ -60,21 +60,6 @@ def validate_setup():
 
     return True
 
-
-def find_background_music():
-    """
-    # Looks for a background music file in the assets/music folder
-    # Returns the path to the first .mp3 or .wav found, or None
-    """
-
-    if not os.path.exists(config.MUSIC_DIR):
-        return None
-
-    for f in os.listdir(config.MUSIC_DIR):
-        if f.endswith((".mp3", ".wav", ".m4a")):
-            return os.path.join(config.MUSIC_DIR, f)
-
-    return None
 
 
 def run_pipeline(topic=None, video_format=None):
@@ -142,15 +127,10 @@ def run_pipeline(topic=None, video_format=None):
     # --- STEP 6: ASSEMBLE FINAL VIDEO ---
     print("\n[STEP 6/6] Assembling final video...")
     output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}.mp4")
-    music_path = find_background_music()
+    # --- Mood-based music selection (matches track to script's dominant mood) ---
+    music_path = select_music(script_segments)
 
     if not music_path:
-        print("[MUSIC] No local music found, downloading from Pixabay...")
-        music_path = download_background_music()
-
-    if music_path:
-        print(f"[MUSIC] Using: {os.path.basename(music_path)}")
-    else:
         print("[MUSIC] No background music available - video will have voiceover only")
 
     assemble_video(
