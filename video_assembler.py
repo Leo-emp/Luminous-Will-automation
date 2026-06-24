@@ -59,7 +59,9 @@ def assemble_video(
     )
 
     # --- Step 3: Create base video ---
-    base_video = create_base_video(visual_timeline, total_duration, profile)
+    # Pass script_segments so create_base_video can look up motion_style
+    # for each clip's matching segment (Ken Burns per-segment control)
+    base_video = create_base_video(visual_timeline, total_duration, profile, script_segments)
     print(f"[ASSEMBLER] Base video created: {base_video.duration:.1f}s")
 
     # --- Step 4: Burn captions on-the-fly ---
@@ -296,10 +298,15 @@ def calculate_segment_times(script_segments, caption_events, total_duration):
     return segment_times
 
 
-def create_base_video(visual_timeline, total_duration, profile):
+def create_base_video(visual_timeline, total_duration, profile, script_segments=None):
     """
     # Creates the base video processing clips one at a time.
     # Uses profile for resolution, bitrate, color grading, and transitions.
+    #
+    # script_segments (optional): list of script segment dicts, each may have
+    #   a "motion_style" field ("ken_burns_zoom", "ken_burns_pan",
+    #   "slow_zoom_out", "static", or absent → treated as "static").
+    #   Used to apply Ken Burns per-clip when profile["ken_burns_enabled"] = True.
     """
     import subprocess
     from color_grading import create_grader
@@ -311,6 +318,15 @@ def create_base_video(visual_timeline, total_duration, profile):
     frame_w = profile["width"]
     frame_h = profile["height"]
     bitrate = profile["bitrate"]
+
+    # --- Determine whether Ken Burns is globally enabled ---
+    # The profile flag is the master switch; individual segments can still
+    # be "static" which means no motion for that specific clip.
+    ken_burns_globally_enabled = profile.get("ken_burns_enabled", False)
+
+    # --- Normalise script_segments to an empty list if not provided ---
+    # This keeps the rest of the loop safe with a simple index check.
+    script_segments_ref = script_segments if script_segments else []
 
     graded_paths = []
     actual_duration = 0.0
@@ -331,6 +347,24 @@ def create_base_video(visual_timeline, total_duration, profile):
                 loops_needed = int(needed / clip.duration) + 1
                 clip = concatenate_videoclips([clip] * loops_needed, method="chain")
                 clip = clip.subclipped(0, needed)
+
+            # --- Apply Ken Burns motion (if enabled and segment has motion_style) ---
+            # Runs AFTER fit_clip (so the clip is already the right size),
+            # BEFORE color grading (so we grade the final cropped output).
+            #
+            # Process:
+            #   1. Look up this segment's motion_style (defaults to "static")
+            #   2. _get_ken_burns_params returns None for static → skip
+            #   3. _apply_ken_burns wraps the clip with a per-frame transform
+            if ken_burns_globally_enabled and idx < len(script_segments_ref):
+                # Fetch the motion_style for this segment (default: "static")
+                motion_style = script_segments_ref[idx].get("motion_style", "static")
+                kb_params = _get_ken_burns_params(motion_style, needed)
+                if kb_params:
+                    # Motion requested — apply the Ken Burns transform
+                    clip = _apply_ken_burns(clip, kb_params, frame_w, frame_h)
+                    print(f"[ASSEMBLER] Ken Burns: {motion_style} on clip {idx+1}/{len(visual_timeline)}")
+                # If kb_params is None (static), no transform is applied
 
             clip = clip.image_transform(grader)
 
@@ -501,6 +535,172 @@ def create_caption_overlay(caption_events, total_duration, profile=None):
         caption_clips.append(caption_clip)
 
     return caption_clips
+
+
+def _get_ken_burns_params(motion_style, duration):
+    """
+    # Returns a dict of motion parameters for the given motion_style,
+    # or None if the clip should be static (no motion effect).
+    #
+    # Called once per clip — cheap, no VideoClip work happens here.
+    #
+    # Supported styles:
+    #   "ken_burns_zoom"  — slow push-in: scales 1.0x → 1.12x over the clip
+    #   "ken_burns_pan"   — slow horizontal drift: 5% pan, constant scale
+    #   "slow_zoom_out"   — pull-back: scales 1.12x → 1.0x over the clip
+    #   "static" / None   — no motion; returns None so caller skips processing
+    #
+    # The 1.12x overscan is enough to cover the full crop window travel
+    # without ever showing blank/black edges.
+    #
+    # Parameters returned:
+    #   start_scale — clip scale at t=0  (relative to target output size)
+    #   end_scale   — clip scale at t=duration
+    #   pan_x       — fractional horizontal drift from center (0 = no drift)
+    #   pan_y       — fractional vertical drift from center  (0 = no drift)
+    """
+
+    # --- Static or unknown style → no motion ---
+    if not motion_style or motion_style == "static":
+        return None
+
+    if motion_style == "ken_burns_zoom":
+        # --- Slow zoom IN: start native, end 12% larger ---
+        # Creates a subtle "push-in" that adds energy to a clip
+        return {
+            "start_scale": 1.0,    # native size at start
+            "end_scale": 1.12,     # 12% larger at end — enough to see motion
+            "pan_x": 0.0,          # no horizontal drift on a pure zoom
+            "pan_y": 0.0,          # no vertical drift
+        }
+
+    elif motion_style == "ken_burns_pan":
+        # --- Horizontal pan: constant scale, 5% drift left-to-right ---
+        # Creates a slow slide; works great on wide landscape footage
+        return {
+            "start_scale": 1.0,    # constant scale throughout
+            "end_scale": 1.0,      # no zoom, pure horizontal motion
+            "pan_x": 0.05,         # 5% of clip width as horizontal travel
+            "pan_y": 0.0,          # no vertical drift
+        }
+
+    elif motion_style == "slow_zoom_out":
+        # --- Pull-back / reveal: starts zoomed in, eases out to native ---
+        # Opposite of ken_burns_zoom; good for opening-style shots
+        return {
+            "start_scale": 1.12,   # start 12% larger (zoomed in)
+            "end_scale": 1.0,      # pull back to native size
+            "pan_x": 0.0,          # no horizontal drift
+            "pan_y": 0.0,          # no vertical drift
+        }
+
+    else:
+        # --- Unknown style → treat as static, no crash ---
+        return None
+
+
+def _apply_ken_burns(clip, params, target_w, target_h):
+    """
+    # Applies Ken Burns motion to a MoviePy VideoClip.
+    #
+    # How it works:
+    #   1. The clip is resized to a slightly LARGER canvas (the overscan)
+    #      so the crop window always has pixels to draw from at every frame.
+    #   2. A crop window of (target_w, target_h) pixels moves over the
+    #      oversized canvas as time progresses — this creates the motion.
+    #   3. Each cropped frame is PIL-resized back to (target_w, target_h)
+    #      to guarantee pixel-perfect output dimensions.
+    #
+    # The crop_at_time function is passed to clip.transform(), which
+    # calls it for every frame with (get_frame, t) — MoviePy 2.x API.
+    #
+    # Args:
+    #   clip      — MoviePy VideoClip already sized to (target_w, target_h)
+    #   params    — dict from _get_ken_burns_params(); None → return unchanged
+    #   target_w  — output width in pixels  (e.g. 1080)
+    #   target_h  — output height in pixels (e.g. 1920)
+    #
+    # Returns: new VideoClip with motion baked in
+    """
+
+    # --- params=None means static; skip all processing ---
+    if params is None:
+        return clip
+
+    duration = clip.duration
+    start_scale = params["start_scale"]
+    end_scale = params["end_scale"]
+    pan_x = params["pan_x"]
+    # pan_y available but not used in current styles (always 0.0)
+
+    # --- Oversize the clip to the maximum scale needed ---
+    # If end_scale=1.12 the clip needs to be 12% bigger than target
+    # so we never crop outside the available pixels.
+    max_scale = max(start_scale, end_scale)
+    oversized_w = int(target_w * max_scale)
+    oversized_h = int(target_h * max_scale)
+
+    # Resize clip to the oversized canvas; this is a cheap scalar operation
+    clip = clip.resized((oversized_w, oversized_h))
+
+    def crop_at_time(get_frame, t):
+        """
+        # Per-frame crop function injected into MoviePy's transform pipeline.
+        # Called with (get_frame callable, t float) — MoviePy 2.x signature.
+        #
+        # At each time t:
+        #   1. Read the oversized frame via get_frame(t)
+        #   2. Compute current progress (0.0 → 1.0)
+        #   3. Determine crop window size based on current zoom level
+        #   4. Determine crop window center based on pan offset
+        #   5. Clamp window to frame boundaries (prevents IndexError)
+        #   6. Crop the numpy array slice
+        #   7. PIL-resize back to (target_w, target_h) — LANCZOS quality
+        """
+        # --- Get the raw oversized frame ---
+        frame = get_frame(t)
+        h, w = frame.shape[:2]
+
+        # --- Normalised progress: 0.0 at clip start, 1.0 at clip end ---
+        progress = t / duration if duration > 0 else 0.0
+
+        # --- Interpolate scale linearly between start and end ---
+        current_scale = start_scale + (end_scale - start_scale) * progress
+
+        # --- Size of the crop window in pixels ---
+        # A larger current_scale means we've zoomed in → crop window shrinks
+        # A smaller current_scale means we've zoomed out → crop window grows
+        # Division by current_scale maps the zoom level to window size.
+        crop_w = int(target_w * (max_scale / current_scale))
+        crop_h = int(target_h * (max_scale / current_scale))
+
+        # --- Crop center: oversized canvas center + pan offset ---
+        # pan_x is a fraction of w; (progress - 0.5) makes it drift
+        # from -0.5*pan to +0.5*pan across the clip duration, centered.
+        cx = w // 2 + int(w * pan_x * (progress - 0.5))
+        cy = h // 2   # vertical center (no vertical pan in current styles)
+
+        # --- Calculate crop rectangle, clamped to frame boundaries ---
+        x1 = max(0, cx - crop_w // 2)
+        y1 = max(0, cy - crop_h // 2)
+        x2 = min(w, x1 + crop_w)
+        y2 = min(h, y1 + crop_h)
+
+        # --- Slice numpy array to get the crop ---
+        cropped = frame[y1:y2, x1:x2]
+
+        # --- Resize back to exact output dimensions using PIL LANCZOS ---
+        # PIL LANCZOS gives cinema-quality downscaling (better than nearest/bilinear)
+        from PIL import Image
+        img = Image.fromarray(cropped)
+        img = img.resize((target_w, target_h), Image.LANCZOS)
+
+        # Convert back to numpy for MoviePy to use as a frame
+        return np.array(img)
+
+    # --- Wrap the clip so every frame goes through crop_at_time ---
+    # MoviePy 2.x transform(func) where func is (get_frame, t) → frame
+    return clip.transform(crop_at_time)
 
 
 def create_logo_outro(profile=None):
