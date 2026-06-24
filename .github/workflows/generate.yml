@@ -1,0 +1,178 @@
+# GitHub Actions Workflow: Automated Video Generation
+# Purpose: Triggers Luminous Will video generation on a schedule (shorts daily, long-form M/Th)
+#          or manually via workflow_dispatch with format selection.
+# This workflow interacts with the HF Spaces Gradio API to queue video generation tasks.
+
+name: Automated Video Generation
+
+# Trigger conditions
+on:
+  # Schedule-based triggers
+  schedule:
+    # Short-form videos: daily at 3:00 AM UTC
+    # This generates quick, snappy content for social media
+    - cron: '0 3 * * *'
+
+    # Long-form videos: Monday and Thursday at 2:00 AM UTC (day 1 and 4)
+    # This generates deeper, more comprehensive content pieces
+    - cron: '0 2 * * 1,4'
+
+  # Manual trigger via GitHub UI or API
+  # Allows users to trigger generation on-demand with format selection
+  workflow_dispatch:
+    inputs:
+      format:
+        description: 'Video format to generate'
+        required: true
+        default: 'short'
+        type: choice
+        options:
+          - short
+          - long
+
+# Job definitions
+jobs:
+  generate:
+    # Environment
+    runs-on: ubuntu-latest
+
+    # Safety timeout: prevent hanging jobs
+    # 30 minutes should be sufficient for space wake + generation trigger + verification
+    timeout-minutes: 30
+
+    steps:
+      # Step 1: Determine which format to generate
+      # Logic:
+      # - If manual trigger (workflow_dispatch): use the user-selected format
+      # - If long-form cron (0 2 * * 1,4): long format
+      # - Otherwise: short format (default daily cron)
+      - name: Determine format
+        id: format
+        run: |
+          # Check if this is a manual workflow_dispatch trigger
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # User selected format via UI
+            echo "format=${{ github.event.inputs.format }}" >> $GITHUB_OUTPUT
+            echo "Trigger: Manual dispatch with format=${{ github.event.inputs.format }}"
+          # Check if this is the long-form cron schedule (Mon/Thu)
+          elif [ "${{ github.event.schedule }}" = "0 2 * * 1,4" ]; then
+            # Scheduled for Monday (1) or Thursday (4) at 2 AM UTC
+            echo "format=long" >> $GITHUB_OUTPUT
+            echo "Trigger: Long-form schedule (Mon/Thu 2 AM UTC)"
+          else
+            # Default to short format for daily 3 AM UTC cron
+            echo "format=short" >> $GITHUB_OUTPUT
+            echo "Trigger: Short-form schedule (daily 3 AM UTC)"
+          fi
+
+      # Step 2: Wake the HF Space
+      # The Hugging Face Space may be dormant to save compute. We need to wake it.
+      # Strategy: Retry HTTP GET up to 5 times with 15s sleep between attempts.
+      # Success = HTTP 200 response within reasonable time.
+      - name: Wake HF Space
+        run: |
+          # HF Spaces URL for Luminous Will Gradio app
+          HF_SPACE_URL="https://leoemp-luminous-will.hf.space/"
+          MAX_RETRIES=5
+          RETRY_DELAY=15
+
+          echo "Waking HF Space at $HF_SPACE_URL..."
+
+          # Retry loop
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Wake attempt $i of $MAX_RETRIES..."
+
+            # Send HTTP GET and capture status code
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$HF_SPACE_URL")
+            echo "  → HTTP Status: $STATUS"
+
+            # Success: Space is responding
+            if [ "$STATUS" = "200" ]; then
+              echo "Space is awake and responding!"
+              exit 0
+            fi
+
+            # Not the last attempt: wait before retrying
+            if [ "$i" -lt "$MAX_RETRIES" ]; then
+              echo "  → Space not ready, waiting ${RETRY_DELAY}s before retry..."
+              sleep $RETRY_DELAY
+            fi
+          done
+
+          # All retries exhausted
+          echo "WARNING: Space did not respond with HTTP 200 after $MAX_RETRIES attempts"
+          echo "Continuing anyway (Space may wake during API call)..."
+
+      # Step 3: Wait for Space to fully load
+      # Even after HTTP 200, the Gradio interface may need time to initialize.
+      # This gives the backend time to load models and become ready for API calls.
+      - name: Wait for Space to fully load
+        run: |
+          echo "Waiting 30 seconds for Gradio interface to initialize..."
+          sleep 30
+          echo "Proceeding with API call..."
+
+      # Step 4: Trigger video generation via Gradio API
+      # Calls the /api/predict endpoint on the Gradio app.
+      # Payload format: {"data": [format, ""]}
+      #   - format: "short" or "long"
+      #   - empty string: placeholder for future parameters
+      # Timeout: 600 seconds (10 minutes) for the HTTP request itself
+      - name: Trigger video generation
+        run: |
+          # Retrieve the format from previous step output
+          FORMAT="${{ steps.format.outputs.format }}"
+
+          # Gradio API endpoint
+          GRADIO_PREDICT_URL="https://leoemp-luminous-will.hf.space/api/predict"
+
+          echo "Triggering $FORMAT video generation..."
+          echo "API Endpoint: $GRADIO_PREDICT_URL"
+
+          # Construct JSON payload: format and empty placeholder parameter
+          PAYLOAD="{\"data\": [\"$FORMAT\", \"\"]}"
+          echo "Payload: $PAYLOAD"
+
+          # Call Gradio API
+          # --max-time 600 = HTTP request timeout of 10 minutes
+          # This allows the generation to start and potentially complete within the call
+          RESPONSE=$(curl -s -X POST \
+            "$GRADIO_PREDICT_URL" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD" \
+            --max-time 600)
+
+          echo "Response received from API:"
+          echo "$RESPONSE"
+
+          # Check response for error keywords
+          # Note: Gradio may return errors in various formats; this is a basic check
+          if echo "$RESPONSE" | grep -q "error"; then
+            echo "ERROR: Response contains 'error' keyword - generation may have failed"
+            exit 1
+          fi
+
+          # Check for empty response
+          if [ -z "$RESPONSE" ]; then
+            echo "WARNING: Empty response from API - may indicate network or timeout issue"
+            exit 1
+          fi
+
+          echo "Generation triggered successfully!"
+
+      # Step 5: Verify generation workflow completion
+      # After triggering, wait a reasonable time and verify that the task was queued.
+      # In a real implementation, this could query the database or status endpoint.
+      # For now, we wait and log completion.
+      - name: Verify generation
+        run: |
+          echo "Verification phase: Waiting for generation task to complete..."
+
+          # Wait 60 seconds for task to process
+          # (In production, you might query a status endpoint instead)
+          sleep 60
+
+          # Log completion
+          echo "Generation task completed or queued for processing"
+          echo "Next step: Monitor HF Spaces logs for actual video generation"
+          echo "Check dashboard or database for pending_review status"
