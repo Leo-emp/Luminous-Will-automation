@@ -69,11 +69,21 @@ def assemble_video(
     frame_h = profile["height"]
 
     def burn_captions(get_frame, t):
+        # --- Get the base video frame at time t ---
         frame = get_frame(t)
         for i, event in enumerate(caption_events):
             if event["start"] <= t < event["end"]:
-                if i not in _caption_render_cache:
+                # --- Time-aware cache key: bucket time to ~80ms for animation ---
+                # int(t * 12.5) gives us one cache slot per 0.08s (= REVEAL_DURATION)
+                # This means we re-render at most 12.5 times per second — enough
+                # for smooth word-reveal animation without excessive CPU cost.
+                cache_key = (i, int(t * 12.5))
+                if cache_key not in _caption_render_cache:
+                    # Clear stale entries to prevent unbounded cache growth
                     _caption_render_cache.clear()
+                    # --- Render caption with per-word timing info ---
+                    # words=event.get("words") passes individual word timestamps
+                    # current_time=t lets the renderer decide which words are visible
                     rgba = render_caption_frame(
                         event["text"],
                         event.get("highlight_word"),
@@ -82,11 +92,16 @@ def assemble_video(
                         font_size=profile["caption_font_size"],
                         position_y=profile["caption_position_y"],
                         stroke_width=profile["caption_stroke_width"],
+                        words=event.get("words"),       # per-word timing for animation
+                        current_time=t,                 # current playback time
                     )
+                    # Pre-compute alpha and RGB for compositing
                     alpha = rgba[:, :, 3:4].astype(np.float32) / 255.0
                     rgb = rgba[:, :, :3].astype(np.float32)
-                    _caption_render_cache[i] = (alpha, rgb)
-                a, rgb = _caption_render_cache[i]
+                    _caption_render_cache[cache_key] = (alpha, rgb)
+                a, rgb = _caption_render_cache[cache_key]
+                # --- Alpha composite caption over video frame ---
+                # result = frame * (1 - alpha) + caption_rgb * alpha
                 result = frame.astype(np.float32)
                 result = result * (1.0 - a) + rgb * a
                 return result.astype(np.uint8)
