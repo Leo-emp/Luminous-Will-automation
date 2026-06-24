@@ -312,48 +312,114 @@ Gemini's prompt includes this history with the instruction:
 
 ---
 
+## 11. 4K Output Option
+
+### Resolution settings per format profile
+| Format | Default | 4K mode |
+|---|---|---|
+| Short (9:16) | 1080x1920 | 2160x3840 |
+| Long (16:9) | 1920x1080 | 3840x2160 |
+
+### Implementation
+- New CLI flag: `python main.py --format short --quality 4k`
+- Default stays 1080p (faster renders for daily use)
+- 4K for maximum quality (special videos, YouTube long-form)
+- Bitrate scales: 15000k → 30000k for 4K
+- Ken Burns and captions render at target resolution
+- Config: `quality` field in format profile (`"1080p"` or `"4k"`)
+
+---
+
+## 12. Premium Thumbnails
+
+### Frame selection — pick the most visually striking frame
+- Sample 20-30 frames evenly across the video (after color grading)
+- Score each frame on:
+  - **Visual contrast** — high contrast = eye-catching
+  - **Subject presence** — frames with a clear subject (silhouette, figure, animal) beat empty landscapes
+  - **Color interest** — frames with amber/blue split toning popping
+  - **Sharpness** — reject blurry frames
+- Pick the top-scoring frame as the base
+
+### Text — bold, minimal, emotional
+- Gemini generates a **2-3 word punch line** from the topic (not the full title):
+  - "Power of Silence" → **"STAY SILENT"**
+  - "Comfort is a threat" → **"COMFORT KILLS"**
+  - "Being average is not a choice" → **"NEVER AVERAGE"**
+- All caps, Montserrat Bold, massive font size
+- White text with heavy black stroke + subtle amber outer glow
+- Positioned to complement the frame, not cover the subject
+
+### Visual treatment
+- Dark vignette intensified (heavier than video — thumbnails need more punch at small size)
+- Slight warm color boost on the subject area (draws the eye)
+- Bottom gradient for text readability if text is at bottom
+
+### Goal
+Looks like a designer made it in Photoshop — not auto-generated. Should compete with Motiversity thumbnails at a glance.
+
+---
+
+## 13. Social Media Captions — Viral-Optimized Per Platform
+
+### Caption style per platform
+| Platform | Style | Length | Hashtags |
+|---|---|---|---|
+| **TikTok** | One punchy line + hashtags | 1-2 sentences max | 5-7 trending + niche |
+| **Instagram Reels** | Hook line + CTA + hashtags | 2-3 sentences | 10-15 mixed (broad + niche) |
+| **Facebook** | Slightly longer, emotional pull | 2-3 sentences | 3-5 only |
+| **YouTube Shorts** | Title is the hook, description has keywords | Title: 5-8 words | Tags in description |
+| **YouTube Long** | SEO description + chapters + keywords | Full description | Tags field |
+
+### Caption rules (in Gemini prompt)
+- First line is the hook — must make someone stop scrolling
+- Use "you" and "your" — make it personal
+- No generic motivational fluff ("keep grinding!")
+- Include a natural CTA ("Save this", "Send to someone who needs this", "Follow for more")
+- Hashtags: mix of broad viral (`#motivation #mindset #psychology`) and niche (`#darkmotivation #stoicmindset #sigmamindset #mentaltoughness`)
+
+### Example output for "Power of Silence"
+
+**TikTok:**
+> Your silence terrifies them. That's the point.
+> #darkmotivation #silence #psychology #mindset #mentalstrength #stoic #sigma
+
+**Instagram:**
+> They want you to react. They need you to react. But the moment you stay silent, you take back all the power. Save this for when you need it.
+> #darkmotivation #silenceispower #stoicmindset #psychology #mentaltoughness #sigmamindset #motivation #selfimprovement #mindset #darkpsychology #powerofsilence #discipline #mentalhealth #growthmindset #strongmind
+
+**YouTube title:**
+> Your Silence Terrifies Them — The Psychology of Power
+
+---
+
 ## Files Modified
 
 | File | Changes |
 |---|---|
-| `config.py` | New API keys, font config, dB mixing values, Ken Burns toggle, crossfade duration |
+| `config.py` | New API keys, font config, dB mixing values, Ken Burns toggle, crossfade duration, 4K quality option |
 | `captions.py` | Montserrat font, word-by-word reveal animation, time-aware rendering |
-| `video_assembler.py` | Ken Burns per clip, context-aware transitions, dB-based audio mixing, remove ducking |
+| `video_assembler.py` | Ken Burns per clip, context-aware transitions, dB-based audio mixing, remove ducking, 4K resolution support |
 | `visuals.py` | Storyblocks search+download layer, scoring improvements (resolution, orientation, duration) |
 | `music.py` | Storyblocks music search layer, Epidemic Sound placeholder |
 | `voiceover.py` | Script text cleaning, post-download validation, pause trimming, timestamp recalculation |
 | `color_grading.py` | S-curve contrast, lift-gamma-gain, selective saturation, adaptive intensity |
 | `script_generator.py` | Full rewrite: Gemini for both formats, topic discovery, history tracking, hook validation |
+| `thumbnail.py` | Premium frame selection, Gemini punch line, styled text overlay, enhanced vignette |
+| `metadata_generator.py` | Viral-optimized captions per platform, hashtag strategy, natural CTAs |
+| `main.py` | Add `--quality 4k` CLI flag, pass quality setting through pipeline |
 
 ## New Files
 
 | File | Purpose |
 |---|---|
-| `assets/fonts/Montserrat-Bold.ttf` | Custom caption font (Google Fonts, free) |
+| `assets/fonts/Montserrat-Bold.ttf` | Custom caption font + thumbnail font (Google Fonts, free) |
 | `generated_history.json` | Tracks all generated video topics + hooks + angles (pre-seeded with 17 existing videos) |
-
-| File | Changes |
-|---|---|
-| `config.py` | New API keys, font config, dB mixing values, Ken Burns toggle, crossfade duration |
-| `captions.py` | Montserrat font, word-by-word reveal animation, time-aware rendering |
-| `video_assembler.py` | Ken Burns per clip, context-aware transitions, dB-based audio mixing, remove ducking |
-| `visuals.py` | Storyblocks search+download layer, scoring improvements (resolution, orientation, duration) |
-| `music.py` | Storyblocks music search layer, Epidemic Sound placeholder |
-| `voiceover.py` | Script text cleaning, post-download validation, pause trimming, timestamp recalculation |
-| `color_grading.py` | S-curve contrast, lift-gamma-gain, selective saturation, adaptive intensity |
-| `script_generator.py` | Add `motion_style` and `transition` fields to Gemini prompt + template heuristics |
-
-## New Files
-
-| File | Purpose |
-|---|---|
-| `assets/fonts/Montserrat-Bold.ttf` | Custom caption font (Google Fonts, free) |
 
 ## No Changes To
 
 | File | Reason |
 |---|---|
-| `main.py` | Pipeline flow unchanged, just better quality at each step |
 | `brand_reference.py` | Brand rules unchanged |
 | `queue_manager.py` | Scheduling unchanged |
 | `scheduler.py` | Scheduling unchanged |
