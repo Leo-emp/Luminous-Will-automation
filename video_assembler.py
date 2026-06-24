@@ -545,75 +545,95 @@ def create_logo_outro(profile=None):
     return logo_clip
 
 
+def _db_to_linear(db):
+    """
+    # Converts decibels (dB) to a linear gain multiplier.
+    # This is the standard audio formula used in all DAWs and broadcast tools.
+    #
+    # Formula: linear = 10 ^ (dB / 20)
+    #
+    # Key values used in this pipeline:
+    #   +1.5 dB  →  1.189x  (voiceover clarity boost — slightly louder)
+    #    0.0 dB  →  1.000x  (unity gain — no change)
+    #   -9.0 dB  →  0.355x  (music level — present but never competing with voice)
+    #
+    # Why /20 and not /10?
+    #   - /20 is for amplitude (voltage/pressure/PCM sample values)
+    #   - /10 is for power (watts) — audio software always uses /20
+    """
+    return 10 ** (db / 20.0)
+
+
 def mix_audio(voiceover, music_path, voiceover_duration, profile=None):
     """
-    # Mixes voiceover with background music.
-    # Two modes based on profile:
-    #   - "flat": constant music volume (for short-form)
-    #   - "ducking": dynamic volume — dips during voice, rises in pauses (for long-form)
+    # Mixes voiceover with background music using dB-based constant levels.
+    # No ducking — music plays at a fixed level throughout (spec §6).
+    #
+    # Levels pulled from profile (set in Task 1 config):
+    #   voiceover_boost_db: +1.5 dB  — adds clarity and authority to the voice
+    #   music_level_db:      -9.0 dB  — music supports without overpowering
+    #
+    # Music also gets a 2s fade-in at the start and 3s fade-out at the end
+    # so it doesn't cut in/out abruptly at the video edges.
+    #
+    # Signature preserved from before: mix_audio(voiceover, music_path,
+    #   voiceover_duration, profile=None) -> AudioClip
     """
 
+    # --- Total video duration = voiceover + logo outro ---
     total_duration = voiceover_duration + config.LOGO_DURATION
-    audio_layers = [voiceover]
+
+    # --- Apply voiceover boost ---
+    # Pull from profile if provided, otherwise fall back to +1.5 dB default
+    vo_boost_db = profile.get("voiceover_boost_db", 1.5) if profile else 1.5
+    vo_gain = _db_to_linear(vo_boost_db)
+    boosted_voiceover = voiceover.with_volume_scaled(vo_gain)
+
+    # Start with just the boosted voice; music will be appended if available
+    audio_layers = [boosted_voiceover]
 
     if music_path and os.path.exists(music_path):
         try:
             music = AudioFileClip(music_path)
 
+            # --- Loop music if the track is shorter than the video ---
+            # e.g. a 60s music file for a 90s video needs to loop 2x
             if music.duration < total_duration:
                 loops = int(total_duration / music.duration) + 1
+                # MoviePy 2.x: use .looped(n=N) not concatenate_audioclips
                 music = music.looped(n=loops)
 
+            # --- Trim to exact video duration ---
+            # MoviePy 2.x: use .subclipped(start, end) not .subclip(start, end)
             music = music.subclipped(0, total_duration)
 
-            music_mode = profile.get("music_mode", "flat") if profile else "flat"
-            base_vol = profile.get("music_volume", 0.32) if profile else config.MUSIC_VOLUME
+            # --- Apply constant dB level to music ---
+            # Pull from profile if provided, otherwise fall back to -9 dB default
+            music_db = profile.get("music_level_db", -9) if profile else -9
+            music_gain = _db_to_linear(music_db)
+            # MoviePy 2.x: use .with_volume_scaled(gain) not .volumex(gain)
+            music = music.with_volume_scaled(music_gain)
 
-            if music_mode == "ducking":
-                high_vol = profile.get("music_volume_high", 0.45)
+            print(
+                f"[ASSEMBLER] Audio mix: voice {vo_boost_db:+.1f}dB ({vo_gain:.3f}x), "
+                f"music {music_db:+.1f}dB ({music_gain:.3f}x) — constant level, no ducking"
+            )
 
-                # Sample voiceover RMS in 0.5s windows to detect speech vs silence
-                vo_audio = voiceover.to_soundarray(fps=22050)
-                window_samples = int(22050 * 0.5)
-                rms_values = []
-                for start in range(0, len(vo_audio), window_samples):
-                    chunk = vo_audio[start:start + window_samples]
-                    rms = np.sqrt(np.mean(chunk ** 2)) if len(chunk) > 0 else 0
-                    rms_values.append(rms)
-
-                # Threshold: below this RMS = silence/pause
-                threshold = np.percentile(rms_values, 25) if rms_values else 0.01
-
-                def duck_volume(get_frame, t):
-                    window_idx = min(int(t / 0.5), len(rms_values) - 1)
-                    if window_idx < 0:
-                        window_idx = 0
-                    rms = rms_values[window_idx] if window_idx < len(rms_values) else 0
-
-                    if rms > threshold:
-                        vol = base_vol
-                    else:
-                        vol = high_vol
-
-                    frame = get_frame(t)
-                    return (frame * vol).astype(frame.dtype)
-
-                music = music.transform(duck_volume, keep_duration=True)
-                print(f"[ASSEMBLER] Dynamic music ducking: {base_vol*100:.0f}% (voice) / {high_vol*100:.0f}% (pauses)")
-            else:
-                music = music.with_volume_scaled(base_vol)
-                print(f"[ASSEMBLER] Flat music at {base_vol*100:.0f}% volume")
-
+            # --- Fade in and out at video edges ---
+            # 2s fade-in prevents music from cutting in abruptly at frame 0
+            # 3s fade-out gives a natural finish as the logo outro ends
             music = music.with_effects([afx.AudioFadeIn(2.0), afx.AudioFadeOut(3.0)])
             audio_layers.append(music)
 
         except Exception as e:
             print(f"[ASSEMBLER] Could not load music: {e}")
 
+    # --- Combine layers into a single composite audio clip ---
     if len(audio_layers) > 1:
         return CompositeAudioClip(audio_layers)
     else:
-        return voiceover
+        # No music loaded — return just the boosted voiceover
+        return boosted_voiceover
 
 
 # --- Quick test ---
