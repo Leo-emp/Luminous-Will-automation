@@ -1,80 +1,605 @@
 import random
 import json
+import os
 import config
 import google.generativeai as genai
+from datetime import date
 
 # ============================================================
-# SCRIPT GENERATOR
-# Generates motivational/psychological scripts with punchy hooks
+# SCRIPT GENERATOR — TASK 10 REWRITE
+# Both short-form AND long-form now use Gemini AI
+# No more template scripts — every video is unique
+#
+# Key features:
+#   - Gemini-powered generation for both video formats
+#   - History tracking in generated_history.json
+#   - Hook quality validation (_is_strong_hook)
+#   - Motion style heuristics per segment
+#   - Emergency fallback (10 pre-written hooks, NO templates)
 # ============================================================
 
 
-# --- Hook templates that stop the scroll ---
-# These are proven viral hook formulas for dark motivation content
-HOOK_TEMPLATES = [
-    "If you {action}, you need to hear this.",
-    "Stop {bad_habit}. Here's why.",
-    "The reason you feel {emotion} isn't what you think.",
-    "Most people will ignore this. But the smart ones won't.",
-    "This one habit is quietly destroying your life.",
-    "They don't want you to know this.",
-    "If nobody told you this today, listen carefully.",
-    "The harsh truth about {topic} nobody talks about.",
-    "You're not {problem}. You're just surrounded by the wrong people.",
-    "A psychologist once said something that changed everything.",
-    "Read this before it's too late.",
-    "The difference between you and them? This.",
-    "This is why you always feel {emotion}.",
-    "Pay attention. This will change how you see everything.",
-    "Here's what {bad_people} don't want you to figure out.",
-    "If you're always the one trying, read this.",
-    "One sentence that will change your entire mindset.",
-    "You were never {problem}. You were just {truth}.",
-    "Some people need to hear this right now.",
-    "The psychology behind why {topic} will shock you.",
+# --- Path to the history file at the project root ---
+# This file tracks every video we've generated to avoid repetition
+HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "generated_history.json")
+
+
+# ============================================================
+# EMERGENCY FALLBACK HOOKS
+# Only used when Gemini API is completely down.
+# These are strong, scroll-stopping hooks with "you" or emotional triggers.
+# NOT the old template scripts — these are minimal safety nets only.
+# ============================================================
+EMERGENCY_HOOKS = [
+    "You were never meant to be average.",
+    "Your brain is being hijacked right now.",
+    "Comfort is killing your potential slowly.",
+    "You're not lazy — you're scared.",
+    "Your emotions are being used against you.",
+    "The most dangerous thing you can do is stay the same.",
+    "Most people are loyal to their needs, not to you.",
+    "You don't need anyone's permission to become great.",
+    "You're living in the wrong timeline.",
+    "The silence you fear is the power you need.",
 ]
 
 
-def generate_script(topic=None, custom_hook=None, video_format=None):
+# ============================================================
+# HISTORY MANAGEMENT
+# Tracks all videos we've generated so we avoid repeating the
+# same topic, hook, or angle too soon.
+# ============================================================
+
+def load_generated_history():
     """
-    # Generates a video script based on the format:
-    #   - VERTICAL_SHORT: template-based (existing behavior)
-    #   - HORIZONTAL_LONG: Gemini AI-generated (8-12 min)
+    # Loads the video generation history from generated_history.json
+    # Returns a list of dicts, each with: topic, hook, angle, date
+    # If the file doesn't exist yet, returns an empty list
+    """
+    if not os.path.exists(HISTORY_FILE):
+        # --- File doesn't exist yet — return empty history ---
+        return []
+
+    try:
+        with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+            history = json.load(f)
+        return history
+    except (json.JSONDecodeError, IOError) as e:
+        # --- Corrupted or unreadable file — return empty rather than crash ---
+        print(f"[HISTORY] Warning: could not load history file: {e}")
+        return []
+
+
+def save_to_history(topic, hook, angle):
+    """
+    # Saves a new entry to generated_history.json
+    # Called after every successful script generation
+    # Appends to the existing list (never overwrites old entries)
     #
-    # Returns (segments_list, topic_string)
+    # Args:
+    #   topic (str): the video topic (e.g. "Power of Silence")
+    #   hook  (str): the opening hook sentence
+    #   angle (str): the psychological angle (e.g. "silence as power tool")
+    """
+    history = load_generated_history()
+
+    # --- Build the new entry with today's date ---
+    new_entry = {
+        "topic": topic,
+        "hook": hook,
+        "angle": angle,
+        "date": str(date.today()),
+    }
+
+    history.append(new_entry)
+
+    try:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, indent=2, ensure_ascii=False)
+        print(f"[HISTORY] Saved entry: {topic}")
+    except IOError as e:
+        # --- Can't write history — not a fatal error, just warn ---
+        print(f"[HISTORY] Warning: could not save history: {e}")
+
+
+# ============================================================
+# HOOK QUALITY VALIDATION
+# A "strong" hook directly addresses the viewer or triggers emotion.
+# Generic philosophical statements are weak — they don't stop the scroll.
+# ============================================================
+
+def _is_strong_hook(text):
+    """
+    # Checks if a hook is strong enough for dark motivation content.
+    # A strong hook must contain at least one of:
+    #   - Personal address: "you" or "your" (speaks directly to the viewer)
+    #   - Emotional trigger words (creates psychological tension)
+    #
+    # Returns True if strong, False if generic/weak
+    #
+    # Examples:
+    #   Strong: "You're not lazy, you're scared"  (has "you")
+    #   Strong: "This is slowly killing your potential"  (has emotional trigger + "your")
+    #   Weak:   "Life is about choices"  (no personal address, no trigger)
     """
 
-    # Import here to avoid circular import
-    from config import VideoFormat
+    # --- Normalize to lowercase for easy matching ---
+    lower = text.lower()
 
-    if video_format == VideoFormat.HORIZONTAL_LONG:
-        return generate_long_script(topic)
+    # --- Check for personal/direct address ---
+    # These words connect the hook directly to the viewer
+    personal_words = ["you", "your"]
+    for word in personal_words:
+        # Match whole words only — "your" shouldn't match "yours" accidentally
+        # Simple approach: check if " you " or starts with "you"
+        if f" {word} " in f" {lower} " or lower.startswith(word):
+            return True
 
-    # --- Default: short-form template script ---
-    if topic is None:
-        topic = random.choice(config.TRENDING_TOPICS)
+    # --- Check for emotional trigger words ---
+    # These words create psychological tension and make people stop scrolling
+    emotional_triggers = [
+        "scared", "alone", "silence", "killing", "dangerous",
+        "dying", "fear", "threat", "hijacked", "trap",
+        "destroying", "wired", "rewired", "broken", "manipulated",
+        "toxic", "weak", "failing", "dead", "lost",
+        "betrayal", "secret", "truth", "lie", "lied",
+        "never", "stop", "warning", "urgent", "critical",
+    ]
+    for trigger in emotional_triggers:
+        if trigger in lower:
+            return True
 
-    print(f"[SCRIPT] Generating script for: {topic}")
-    script = get_template_script(topic)
-    return script, topic
+    # --- No personal address and no emotional trigger found — weak hook ---
+    return False
 
 
-def generate_long_script(topic=None):
+# ============================================================
+# MOTION STYLE HEURISTICS
+# Determines the Ken Burns motion effect based on visual content.
+# This is used by the video assembler (Task 6) to add cinematic movement.
+# ============================================================
+
+def _infer_motion_style(visual_keywords):
     """
-    # Generates an 8-12 minute script using Gemini AI
-    # Returns 40-60 segments with narrative arc structure:
-    #   hook -> setup -> escalation -> climax -> resolution -> callback
-    # Each segment includes visual keywords and chapter markers
+    # Infers the best Ken Burns motion style from a segment's visual keywords.
+    #
+    # Three styles:
+    #   "ken_burns_pan"  — slow sideways drift, good for wide landscapes
+    #   "ken_burns_zoom" — slow push-in, good for portraits and close-ups
+    #   "static"         — no movement, good for action footage that already moves
+    #
+    # Logic:
+    #   landscape/nature/mountain/ocean/clouds → ken_burns_pan
+    #   portrait/face/silhouette/close-up      → ken_burns_zoom
+    #   action/running/training/fighting       → static
+    #   default                                → static
+    #
+    # Args:
+    #   visual_keywords (str): the search keywords for this segment
+    #
+    # Returns: "ken_burns_pan" | "ken_burns_zoom" | "static"
     """
 
-    if topic is None:
-        topic = random.choice(config.TRENDING_TOPICS)
+    # --- Normalize for matching ---
+    lower = visual_keywords.lower()
 
-    print(f"[SCRIPT] Generating long-form script for: {topic}")
+    # --- Action keywords → footage already has natural motion, keep static ---
+    # Adding Ken Burns on top of fast-moving clips looks bad
+    action_keywords = [
+        "running", "boxing", "training", "fighting", "sprint",
+        "action", "workout", "exercise", "punching", "climbing",
+        "jumping", "driving fast", "racing",
+    ]
+    for kw in action_keywords:
+        if kw in lower:
+            return "static"
+
+    # --- Landscape/nature keywords → pan slowly across the wide scene ---
+    # Mountains, oceans, cityscapes all look great with a horizontal drift
+    landscape_keywords = [
+        "landscape", "mountain", "ocean", "clouds", "nature",
+        "forest", "valley", "horizon", "field", "sky",
+        "cityscape", "aerial", "highway", "desert", "river",
+    ]
+    for kw in landscape_keywords:
+        if kw in lower:
+            return "ken_burns_pan"
+
+    # --- Portrait/close-up keywords → slow zoom in for intimacy ---
+    # Faces, silhouettes, and close subjects feel more intense with a push-in
+    portrait_keywords = [
+        "portrait", "face", "silhouette", "close-up", "close up",
+        "closeup", "man standing", "man sitting", "person",
+        "eyes", "hands", "chess board",
+    ]
+    for kw in portrait_keywords:
+        if kw in lower:
+            return "ken_burns_zoom"
+
+    # --- Default: static is always safe ---
+    return "static"
+
+
+# ============================================================
+# SHORT-FORM HEURISTIC ENRICHMENT
+# Adds motion_style and transition fields to segments that came
+# from Gemini without those fields (e.g. when Gemini generates
+# short-form scripts without per-segment transition choices)
+# ============================================================
+
+def _build_short_form_heuristics(segments):
+    """
+    # Adds motion_style and transition fields to short-form segments
+    # based on visual_keywords and mood changes between segments.
+    #
+    # Called after Gemini returns a short-form script, OR on any
+    # segment list that's missing these fields.
+    #
+    # Transition logic:
+    #   - mood changes between segments → "crossfade" (smooth blend)
+    #   - same mood → "cut" (sharp, energetic)
+    #   - last segment always → "crossfade" (softer ending)
+    #
+    # Args:
+    #   segments (list[dict]): script segments, each with at minimum
+    #                          "visual_keywords" and "mood" fields
+    #
+    # Returns: the same list with motion_style and transition added
+    """
+
+    enriched = []
+
+    for i, seg in enumerate(segments):
+        # --- Copy the segment so we don't mutate the original ---
+        s = dict(seg)
+
+        # --- Infer motion style from visual keywords ---
+        visual_keywords = s.get("visual_keywords", "")
+        s["motion_style"] = _infer_motion_style(visual_keywords)
+
+        # --- Choose transition based on mood change ---
+        # If the next segment has a different mood, crossfade smoothly
+        # If same mood, a sharp cut keeps the energy high
+        current_mood = s.get("mood", "dark")
+        is_last = (i == len(segments) - 1)
+
+        if is_last:
+            # --- Always end with a crossfade for a softer finish ---
+            s["transition"] = "crossfade"
+        else:
+            next_mood = segments[i + 1].get("mood", "dark")
+            if current_mood != next_mood:
+                # --- Mood shift → smooth crossfade to signal the change ---
+                s["transition"] = "crossfade"
+            else:
+                # --- Same mood → sharp cut keeps the intensity ---
+                s["transition"] = "cut"
+
+        enriched.append(s)
+
+    return enriched
+
+
+# ============================================================
+# TOPIC DISCOVERY
+# Uses Gemini to discover fresh viral topic ideas based on
+# what's already been done (from history) and trending niches.
+# ============================================================
+
+def discover_topics():
+    """
+    # Uses Gemini to discover new viral topic ideas for dark motivation content.
+    # Avoids topics already in the generation history.
+    #
+    # Returns: list of topic strings (typically 10-15 suggestions)
+    # Fallback: returns config.TRENDING_TOPICS if Gemini is unavailable
+    """
 
     if not config.GEMINI_API_KEY:
-        print("[SCRIPT] WARNING: No Gemini API key, falling back to chained templates")
-        return _chain_template_scripts(topic), topic
+        # --- No API key — return the built-in topic list ---
+        print("[TOPICS] No Gemini API key, returning built-in topics")
+        return config.TRENDING_TOPICS
+
+    # --- Get topics we've already covered to avoid repetition ---
+    history = load_generated_history()
+    used_topics = [entry["topic"] for entry in history]
+
+    genai.configure(api_key=config.GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    prompt = f"""You are a content strategist for "Luminous Will" — a dark motivation YouTube/TikTok channel.
+
+CHANNEL NICHE: Dark psychology, stoic philosophy, power dynamics, self-mastery.
+BRAND TONE: Intense, commanding, no fluff. Speaks to people who want to level up.
+
+TOPICS ALREADY USED (avoid these):
+{json.dumps(used_topics, indent=2)}
+
+Generate 12 fresh viral topic ideas for short-form dark motivation videos (60-90 seconds).
+Each topic should be:
+- Specific (not vague like "mindset tips")
+- Psychologically interesting
+- Relatable to young ambitious adults (18-35)
+- Different from the used topics above
+
+OUTPUT FORMAT — respond with ONLY a JSON array of strings, no markdown:
+["Topic idea 1", "Topic idea 2", ...]"""
+
+    try:
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+
+        # --- Strip markdown fences if Gemini added them ---
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1]
+            if raw_text.endswith("```"):
+                raw_text = raw_text[:-3]
+            raw_text = raw_text.strip()
+
+        topics = json.loads(raw_text)
+        print(f"[TOPICS] Discovered {len(topics)} new topics via Gemini")
+        return topics
+
+    except Exception as e:
+        print(f"[TOPICS] Topic discovery failed: {e}")
+        print("[TOPICS] Falling back to built-in topics")
+        return config.TRENDING_TOPICS
+
+
+# ============================================================
+# EMERGENCY FALLBACK SCRIPT BUILDER
+# Only runs when Gemini API is completely down.
+# Uses the 10 pre-written emergency hooks + generic dark segments.
+# This is NOT the old template approach — it's a minimal safety net.
+# ============================================================
+
+def _build_emergency_script(topic, num_segments=25):
+    """
+    # Emergency fallback when Gemini is completely unavailable.
+    # Builds a minimal but usable script from:
+    #   - 10 pre-written strong hooks (see EMERGENCY_HOOKS above)
+    #   - Generic dark motivation segments about the topic
+    #
+    # This is different from the old template approach:
+    #   Old: 5 full pre-written scripts picked by topic name
+    #   New: one random strong hook + generic segments (always works)
+    #
+    # Args:
+    #   topic       (str): the video topic
+    #   num_segments (int): how many segments to generate (default 25)
+    #
+    # Returns: list of segment dicts with all required fields
+    """
+
+    print(f"[SCRIPT] EMERGENCY: Building fallback script for '{topic}'")
+
+    # --- Pick one of the 10 strong emergency hooks at random ---
+    hook_text = random.choice(EMERGENCY_HOOKS)
+
+    # --- Generic dark motivation sentences that work for any topic ---
+    # These are universal truths that fit the brand voice
+    generic_lines = [
+        f"This is the truth about {topic} that nobody talks about.",
+        "Most people will ignore this message.",
+        "The ones who pay attention will change everything.",
+        "You already know something is wrong.",
+        "That feeling you have? It's a signal.",
+        "The world rewards those who do the hard things.",
+        "Every day you wait is a day someone else gets ahead.",
+        "Your standards are either rising or falling.",
+        "There is no neutral. You are either growing or shrinking.",
+        "The weak ask for permission. The strong take action.",
+        "Pain is temporary. Regret lasts forever.",
+        "You are exactly where your decisions brought you.",
+        "Change the decisions, change the destination.",
+        "The version of you that succeeds already exists.",
+        "You just have to become them.",
+        "Stop asking when. Start asking how.",
+        "Discipline is not a punishment. It is a gift you give yourself.",
+        "The days you don't feel like it are the days that matter most.",
+        "Your comfort zone is a beautiful place where nothing grows.",
+        "What you allow, you teach the world to give you.",
+        "Silence your critics by outworking them.",
+        "The path is hard. Good. Hard paths build strong people.",
+        "Start before you are ready.",
+        "Finish what you started.",
+        "Your future self is watching.",
+    ]
+
+    # --- Build the segments list ---
+    segments = []
+
+    # --- First segment is always the hook ---
+    segments.append({
+        "text": hook_text,
+        "visual_keywords": "dark cinematic man silhouette dramatic",
+        "visual_keywords_alt": [
+            "dark dramatic cinematic opener",
+            "man silhouette night powerful",
+            "dark atmospheric moody cinematic",
+        ],
+        "mood": "intense",
+        "emphasis_word": hook_text.split()[0],  # first word of hook
+        "chapter": "Introduction",
+        "motion_style": "ken_burns_zoom",
+        "transition": "cut",
+    })
+
+    # --- Fill remaining segments with generic lines ---
+    # Shuffle so the order is different each time
+    shuffled = generic_lines[:]
+    random.shuffle(shuffled)
+
+    for i, line in enumerate(shuffled[:num_segments - 1]):
+        # --- Alternate moods to create variety ---
+        mood_cycle = ["dark", "intense", "reflective", "powerful"]
+        mood = mood_cycle[i % len(mood_cycle)]
+
+        # --- Visual keywords rotate through dark cinematic themes ---
+        visual_options = [
+            "dark storm clouds cinematic dramatic",
+            "man walking alone dark city night",
+            "wolf forest night dark cinematic",
+            "dark mountain peak clouds fog",
+            "chess board dark cinematic strategy",
+            "athlete training dark gym silhouette",
+            "ocean waves dark cinematic slow motion",
+            "man silhouette rooftop night dark",
+        ]
+        visual = visual_options[i % len(visual_options)]
+
+        segments.append({
+            "text": line,
+            "visual_keywords": visual,
+            "visual_keywords_alt": [],
+            "mood": mood,
+            "emphasis_word": "",
+            "chapter": None,
+            "motion_style": _infer_motion_style(visual),
+            "transition": "crossfade" if mood == "reflective" else "cut",
+        })
+
+    print(f"[SCRIPT] Emergency fallback: {len(segments)} segments built")
+    return segments
+
+
+# ============================================================
+# SHORT-FORM GEMINI SCRIPT GENERATION
+# 25 segments, 60-90s total, punchy dark motivation
+# ============================================================
+
+def _generate_short_script_gemini(topic, custom_hook=None):
+    """
+    # Generates a short-form (60-90s) script using Gemini AI.
+    # Returns 25 segments with hook validation and motion heuristics.
+    #
+    # If custom_hook is provided, Gemini will use it as the opener.
+    # If not, Gemini chooses its own hook, which we then validate.
+    # If the hook is weak, we regenerate or substitute an emergency hook.
+    #
+    # Args:
+    #   topic       (str): the video topic
+    #   custom_hook (str): optional override for the first segment
+    #
+    # Returns: list of 25 segment dicts
+    """
+
+    genai.configure(api_key=config.GEMINI_API_KEY)
+    model = genai.GenerativeModel("gemini-2.5-flash")
+
+    # --- Build hook instruction for the prompt ---
+    # If caller supplied a hook, lock Gemini to use it
+    # Otherwise let Gemini create one (we validate it after)
+    if custom_hook:
+        hook_instruction = f'USE THIS EXACT HOOK as the first segment text: "{custom_hook}"'
+    else:
+        hook_instruction = (
+            "Create a POWERFUL opening hook that:\n"
+            "- Directly addresses the viewer using 'you' or 'your'\n"
+            "- OR contains a shocking emotional trigger word\n"
+            "- Is ONE sentence, max 12 words\n"
+            "- Makes someone stop scrolling immediately"
+        )
+
+    prompt = f"""You are a scriptwriter for "Luminous Will" — dark motivation, stoic philosophy, psychology of power.
+
+VOICE RULES:
+- Stoic, commanding. Short punchy sentences (max 15 words each).
+- No fluff, no clichés ("grind", "hustle", "manifest"), no questions to audience.
+- Speak in universal truths. Use "you" and "they". Never say "I" or "we".
+- Dark, intense energy. The tone of someone who has seen the worst and emerged stronger.
+- Simple language — 8th grade reading level. Short Anglo-Saxon words over Latin ones.
+
+TASK: Generate a 60-90 second short-form video script on the topic: "{topic}"
+
+OPENING HOOK:
+{hook_instruction}
+
+STRUCTURE (25 segments total):
+- Segment 1: Hook — one shocking sentence that stops the scroll
+- Segments 2-5: Setup — frame the problem, make it personal
+- Segments 6-16: Core — dark truths, uncomfortable revelations, build intensity
+- Segments 17-22: Turn — the wake-up call, the shift in perspective
+- Segments 23-25: Close — call to action, final power statement
+
+Generate exactly 25 segments. Each segment is ONE sentence (max 15 words).
+
+OUTPUT FORMAT — respond with ONLY a JSON array, no markdown, no explanation:
+[
+  {{
+    "text": "The sentence spoken in the voiceover.",
+    "visual_keywords": "5-6 keywords for stock footage search (portrait orientation, dark cinematic)",
+    "mood": "dark|intense|reflective|powerful",
+    "emphasis_word": "one_key_word"
+  }},
+  ...
+]
+
+VISUAL KEYWORD RULES:
+- Always include "dark" or "cinematic" in keywords
+- Use portrait-oriented subjects for vertical video: man standing, silhouette, close-up face, person walking
+- Preferred subjects: dark silhouette portrait, man walking dark night, person alone dark, wolf forest dark, lion savanna dark, chess board dark, gym training dark, rain window dark, fire flames dark
+- Vary subjects — no two consecutive segments with the same visual theme
+
+Generate the script now. 25 segments, JSON array only."""
+
+    response = model.generate_content(prompt)
+    raw_text = response.text.strip()
+
+    # --- Strip markdown code fences if Gemini added them ---
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+
+    segments_raw = json.loads(raw_text)
+
+    # --- Validate and normalize segment structure ---
+    validated = []
+    for seg in segments_raw:
+        validated.append({
+            "text": str(seg.get("text", "")),
+            "visual_keywords": str(seg.get("visual_keywords", "dark cinematic silhouette")),
+            "visual_keywords_alt": [],  # enriched separately by enrich_visual_keywords()
+            "mood": str(seg.get("mood", "dark")),
+            "emphasis_word": str(seg.get("emphasis_word", "")),
+            "chapter": None,  # short-form has no chapters
+        })
+
+    # --- Hook validation ---
+    # Check if the first segment's hook is actually strong
+    if validated and not _is_strong_hook(validated[0]["text"]):
+        print(f"[SCRIPT] Hook validation failed: '{validated[0]['text']}'")
+        print("[SCRIPT] Substituting emergency hook...")
+        # Pick an emergency hook and inject it into the first segment
+        validated[0]["text"] = random.choice(EMERGENCY_HOOKS)
+
+    # --- Add motion_style and transition via heuristics ---
+    # Gemini doesn't pick transitions for short-form — we do it here
+    validated = _build_short_form_heuristics(validated)
+
+    print(f"[SCRIPT] Short-form: {len(validated)} segments generated via Gemini")
+    return validated
+
+
+# ============================================================
+# LONG-FORM GEMINI SCRIPT GENERATION
+# 50 segments, 8-12 min narrative arc, chapter markers
+# ============================================================
+
+def _generate_long_script_gemini(topic):
+    """
+    # Generates a long-form (8-12 min) script using Gemini AI.
+    # Returns 50 segments with narrative arc structure:
+    #   hook -> setup -> escalation -> climax -> resolution -> callback
+    # Each segment includes chapter markers, motion_style, and transition.
+    #
+    # Args:
+    #   topic (str): the video topic
+    #
+    # Returns: list of 50 segment dicts
+    """
 
     genai.configure(api_key=config.GEMINI_API_KEY)
     model = genai.GenerativeModel("gemini-2.5-flash")
@@ -86,6 +611,7 @@ VOICE RULES:
 - No fluff, no clichés ("grind", "hustle", "manifest"), no questions to the audience.
 - Speak in universal truths. Never say "I" or "we". Use "you" and "they".
 - Dark, intense energy. The tone of someone who has seen the worst and emerged stronger.
+- Simple language — 8th grade reading level.
 
 STRUCTURE for an 8-12 minute script on "{topic}":
 1. HOOK (first 30 seconds) — One shocking statement that stops the scroll
@@ -110,7 +636,9 @@ OUTPUT FORMAT — respond with ONLY a JSON array, no markdown, no explanation:
       "alternative search query 3 — concrete subject that matches the mood"
     ],
     "mood": "dark|intense|reflective|powerful",
-    "emphasis_words": ["one", "key", "word"],
+    "emphasis_word": "one_key_word",
+    "motion_style": "ken_burns_pan|ken_burns_zoom|static",
+    "transition": "crossfade|cut",
     "chapter": "Chapter Title Here or null"
   }},
   ...
@@ -118,77 +646,216 @@ OUTPUT FORMAT — respond with ONLY a JSON array, no markdown, no explanation:
 
 VISUAL KEYWORD RULES:
 - Always include "dark" or "cinematic" in keywords
-- Use landscape-oriented subjects: cityscapes, mountains, oceans, highways, architecture, storms
-- Vary the subjects — no two consecutive segments should have the same visual theme
+- Use landscape-oriented subjects for horizontal video: cityscapes, mountains, oceans, highways, architecture, storms
+- Vary subjects — no two consecutive segments with the same visual theme
 - Preferred subjects: dark cityscape night, storm clouds dramatic, mountain peak dark, ocean waves cinematic, businessman walking dark, wolf forest night, lion savanna dark, chess board dark, gym training dark, running athlete silhouette
 
-VISUAL KEYWORDS ALT RULES:
-- Each alt query should be a DIFFERENT way to find footage that matches this segment's meaning
-- Alt 1: rephrase the main query with different synonyms (e.g. "dark city skyline night" vs "urban nightscape cinematic")
-- Alt 2: zoom out to a broader concept (e.g. "dark atmospheric landscape" for a power segment)
-- Alt 3: use a concrete, searchable subject (e.g. "wolf standing alone dark forest" for a solitude segment)
-- All alts must still match the dark/cinematic brand — no bright, happy, colorful subjects
+MOTION STYLE GUIDE:
+- ken_burns_pan: slow sideways drift — good for wide landscapes, cityscapes, mountain scenes
+- ken_burns_zoom: slow push-in — good for portraits, silhouettes, close-up subjects
+- static: no camera movement — good for action footage that already has motion (running, boxing, training)
+
+TRANSITION GUIDE:
+- crossfade: smooth blend — use when mood shifts between segments
+- cut: sharp edit — use within the same mood for intensity
 
 Generate the script now. 50 segments, JSON array only."""
 
+    response = model.generate_content(prompt)
+    raw_text = response.text.strip()
+
+    # --- Strip markdown code fences if Gemini added them ---
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+
+    segments_raw = json.loads(raw_text)
+
+    # --- Validate and normalize each segment ---
+    validated = []
+    for seg in segments_raw:
+        # --- Parse alt keywords list ---
+        raw_alts = seg.get("visual_keywords_alt", [])
+        alts = [str(a) for a in raw_alts if a] if isinstance(raw_alts, list) else []
+
+        # --- Normalize motion_style: fallback to heuristic if Gemini didn't set it ---
+        motion_style = str(seg.get("motion_style", "")).strip()
+        if motion_style not in ("ken_burns_pan", "ken_burns_zoom", "static"):
+            motion_style = _infer_motion_style(str(seg.get("visual_keywords", "")))
+
+        # --- Normalize transition: fallback to "cut" if missing ---
+        transition = str(seg.get("transition", "")).strip()
+        if transition not in ("crossfade", "cut"):
+            transition = "cut"
+
+        validated.append({
+            "text": str(seg.get("text", "")),
+            "visual_keywords": str(seg.get("visual_keywords", "dark cinematic landscape")),
+            "visual_keywords_alt": alts,
+            "mood": str(seg.get("mood", "dark")),
+            "emphasis_word": str(seg.get("emphasis_word", "")),
+            "motion_style": motion_style,
+            "transition": transition,
+            "chapter": seg.get("chapter"),  # None or string
+        })
+
+    if len(validated) < 30:
+        print(f"[SCRIPT] WARNING: Only {len(validated)} segments generated, expected 50")
+
+    # --- Count chapter markers ---
+    chapters = [s for s in validated if s.get("chapter")]
+    print(f"[SCRIPT] Long-form: {len(validated)} segments, {len(chapters)} chapters")
+
+    return validated
+
+
+# ============================================================
+# MAIN ENTRY POINT
+# Called by other modules (main.py, queue_manager.py, etc.)
+# Signature is unchanged from the original: (topic, custom_hook, video_format)
+# ============================================================
+
+def generate_script(topic=None, custom_hook=None, video_format=None):
+    """
+    # Main script generation function — called by all other modules.
+    #
+    # Generates a complete video script using Gemini AI.
+    # Both short-form and long-form now use Gemini (no more templates).
+    # Falls back to emergency script if Gemini API is completely down.
+    #
+    # Args:
+    #   topic       (str|None): video topic; picks random from TRENDING_TOPICS if None
+    #   custom_hook (str|None): custom opening hook; Gemini picks one if None
+    #   video_format (VideoFormat|None): VERTICAL_SHORT or HORIZONTAL_LONG
+    #                                    defaults to VERTICAL_SHORT if None
+    #
+    # Returns: (segments_list, topic_string)
+    #   segments_list: list of dicts, each with:
+    #     - text          (str): voiceover sentence
+    #     - visual_keywords (str): stock footage search terms
+    #     - visual_keywords_alt (list): 3 alternative search queries
+    #     - mood          (str): dark|intense|reflective|powerful
+    #     - emphasis_word (str): word to highlight in captions
+    #     - motion_style  (str): ken_burns_pan|ken_burns_zoom|static
+    #     - transition    (str): crossfade|cut
+    #     - chapter       (str|None): YouTube chapter title (long-form only)
+    #   topic_string: the final topic used (may differ from input if random)
+    """
+
+    # --- Import here to avoid circular import issues ---
+    from config import VideoFormat
+
+    # --- Pick a topic if none was given ---
+    if topic is None:
+        topic = random.choice(config.TRENDING_TOPICS)
+
+    print(f"[SCRIPT] Generating script for: {topic}")
+    print(f"[SCRIPT] Format: {video_format}")
+
+    # --- Route to the right generator based on format ---
+    if video_format == VideoFormat.HORIZONTAL_LONG:
+        # --- Long-form: 50 segments, narrative arc, chapter markers ---
+        segments, topic = _run_long_form(topic)
+    else:
+        # --- Short-form: 25 segments, punchy, 60-90s (default) ---
+        segments, topic = _run_short_form(topic, custom_hook)
+
+    return segments, topic
+
+
+def _run_short_form(topic, custom_hook=None):
+    """
+    # Internal handler for short-form generation.
+    # Calls Gemini, falls back to emergency if API is down.
+    # Saves to history on success.
+    #
+    # Returns: (segments, topic)
+    """
+
+    if not config.GEMINI_API_KEY:
+        # --- No API key configured at all — use emergency fallback ---
+        print("[SCRIPT] WARNING: No Gemini API key, using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=25)
+        return segments, topic
+
     try:
-        response = model.generate_content(prompt)
-        raw_text = response.text.strip()
+        segments = _generate_short_script_gemini(topic, custom_hook)
 
-        # Strip markdown code fences if present
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("\n", 1)[1]
-            if raw_text.endswith("```"):
-                raw_text = raw_text[:-3]
-            raw_text = raw_text.strip()
+        # --- Save to history on successful Gemini generation ---
+        hook_text = segments[0]["text"] if segments else ""
+        save_to_history(topic, hook_text, f"Gemini-generated on {date.today()}")
 
-        segments = json.loads(raw_text)
-
-        # Validate and normalize segment structure
-        validated = []
-        for seg in segments:
-            # --- Parse alt keywords: list of 3 alternative search queries ---
-            raw_alts = seg.get("visual_keywords_alt", [])
-            alts = [str(a) for a in raw_alts if a] if isinstance(raw_alts, list) else []
-
-            validated.append({
-                "text": str(seg.get("text", "")),
-                "visual_keywords": str(seg.get("visual_keywords", "dark cinematic landscape")),
-                "visual_keywords_alt": alts,
-                "emphasis_word": seg.get("emphasis_words", [""])[0] if seg.get("emphasis_words") else "",
-                "mood": str(seg.get("mood", "dark")),
-                "chapter": seg.get("chapter"),
-            })
-
-        if len(validated) < 30:
-            print(f"[SCRIPT] WARNING: Only {len(validated)} segments generated, expected 40-60")
-
-        print(f"[SCRIPT] Generated {len(validated)} segments via Gemini")
-
-        # Count chapters
-        chapters = [s for s in validated if s.get("chapter")]
-        print(f"[SCRIPT] Chapters: {len(chapters)}")
-
-        return validated, topic
+        return segments, topic
 
     except json.JSONDecodeError as e:
-        print(f"[SCRIPT] JSON parse error from Gemini: {e}")
-        print(f"[SCRIPT] Raw response (first 500 chars): {raw_text[:500]}")
-        print("[SCRIPT] Falling back to chained templates")
-        return _chain_template_scripts(topic), topic
+        # --- Gemini returned something that wasn't valid JSON ---
+        print(f"[SCRIPT] JSON parse error from Gemini short-form: {e}")
+        print("[SCRIPT] Using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=25)
+        return segments, topic
 
     except Exception as e:
-        print(f"[SCRIPT] Gemini API error: {e}")
-        print("[SCRIPT] Falling back to chained templates")
-        return _chain_template_scripts(topic), topic
+        # --- Any other Gemini API error (quota, network, etc.) ---
+        print(f"[SCRIPT] Gemini API error (short-form): {e}")
+        print("[SCRIPT] Using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=25)
+        return segments, topic
 
+
+def _run_long_form(topic):
+    """
+    # Internal handler for long-form generation.
+    # Calls Gemini, falls back to emergency if API is down.
+    # Saves to history on success.
+    #
+    # Returns: (segments, topic)
+    """
+
+    if not config.GEMINI_API_KEY:
+        # --- No API key — use emergency fallback (50 segments) ---
+        print("[SCRIPT] WARNING: No Gemini API key, using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=50)
+        return segments, topic
+
+    try:
+        segments = _generate_long_script_gemini(topic)
+
+        # --- Save to history on success ---
+        hook_text = segments[0]["text"] if segments else ""
+        save_to_history(topic, hook_text, f"Gemini long-form on {date.today()}")
+
+        return segments, topic
+
+    except json.JSONDecodeError as e:
+        print(f"[SCRIPT] JSON parse error from Gemini long-form: {e}")
+        print("[SCRIPT] Using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=50)
+        return segments, topic
+
+    except Exception as e:
+        print(f"[SCRIPT] Gemini API error (long-form): {e}")
+        print("[SCRIPT] Using emergency fallback")
+        segments = _build_emergency_script(topic, num_segments=50)
+        return segments, topic
+
+
+# ============================================================
+# VISUAL KEYWORD ENRICHMENT
+# Batch-adds 3 alternative search queries per segment using Gemini.
+# Runs AFTER the main script is generated, as a separate API call.
+# ============================================================
 
 def enrich_visual_keywords(segments):
     """
-    # Batch-enriches ALL segments with alt visual keywords using Gemini
-    # Works for both short-form (templates) and long-form (Gemini scripts)
-    # Skips segments that already have visual_keywords_alt
-    # One API call for the entire video — efficient and consistent
+    # Batch-enriches ALL segments with alt visual keywords using Gemini.
+    # Works for both short-form and long-form scripts.
+    # Skips segments that already have visual_keywords_alt.
+    # One API call for the entire video — efficient and consistent.
+    #
+    # Args:
+    #   segments (list[dict]): script segments to enrich
     #
     # Returns: the same segments list with visual_keywords_alt populated
     """
@@ -248,7 +915,7 @@ OUTPUT FORMAT — respond with ONLY a JSON array, no markdown:
         response = model.generate_content(prompt)
         raw_text = response.text.strip()
 
-        # Strip markdown code fences if present
+        # --- Strip markdown code fences if present ---
         if raw_text.startswith("```"):
             raw_text = raw_text.split("\n", 1)[1]
             if raw_text.endswith("```"):
@@ -274,39 +941,30 @@ OUTPUT FORMAT — respond with ONLY a JSON array, no markdown:
     return segments
 
 
-def _chain_template_scripts(topic):
-    """
-    # Fallback: chains multiple template scripts together for long-form
-    # Used when Gemini API is unavailable
-    """
-    available_scripts = []
-    for t in config.TRENDING_TOPICS:
-        script = get_template_script(t)
-        if len(script) > 0:
-            available_scripts.append(script)
-
-    # Shuffle and take enough to fill 8-12 minutes (~50 segments)
-    random.shuffle(available_scripts)
-    chained = []
-    for script in available_scripts:
-        chained.extend(script)
-        if len(chained) >= 45:
-            break
-
-    return chained
-
+# ============================================================
+# CHAPTER EXTRACTION
+# Extracts YouTube chapter markers from long-form scripts.
+# Called by video assembler and metadata generator.
+# ============================================================
 
 def extract_chapters(script_segments, caption_events):
     """
-    # Extracts YouTube chapter markers from long-form script segments
-    # Returns list of {time: "M:SS", title: str} for video description
+    # Extracts YouTube chapter markers from long-form script segments.
+    # Returns list of {time: "M:SS", title: str, seconds: float}
+    # Used to generate the YouTube video description with timestamps.
+    #
+    # Args:
+    #   script_segments (list[dict]): the script segments
+    #   caption_events  (list[dict]): word-level timing from ElevenLabs
+    #
+    # Returns: list of chapter dicts with time, title, seconds
     """
     chapters = []
     word_index = 0
 
     for seg in script_segments:
         if seg.get("chapter"):
-            # Find the timestamp for this segment
+            # --- Find the timestamp for this segment in the caption events ---
             if word_index < len(caption_events):
                 start_time = caption_events[word_index]["start"] if caption_events else 0
             else:
@@ -322,705 +980,72 @@ def extract_chapters(script_segments, caption_events):
 
         word_index += 1
 
-    # Ensure first chapter starts at 0:00
+    # --- Ensure first chapter starts at 0:00 ---
+    # YouTube requires the first chapter to start at the beginning
     if chapters and chapters[0]["seconds"] > 0:
         chapters.insert(0, {"time": "0:00", "title": "Introduction", "seconds": 0})
 
     return chapters
 
 
-def get_template_script(topic):
-    """
-    # Returns a pre-written template script
-    # Replace this function with LLM-generated scripts for variety
-    # Each segment = one caption group shown on screen
-    """
-
-    # --- Collection of full scripts organized by topic ---
-    scripts = {
-
-        # =====================================================
-        # SCRIPT: The psychology of silence and power
-        # ~27 segments, ~185 words -> ~70s at 2.62 wps
-        # =====================================================
-        "The psychology of silence and power": [
-            {
-                "text": "The most powerful people in the room never raise their voice.",
-                "visual_keywords": "man silhouette suit dark office window",
-                "emphasis_word": "powerful",
-            },
-            {
-                "text": "And there's a psychological reason for that.",
-                "visual_keywords": "chess pieces dark cinematic board",
-                "emphasis_word": "psychological",
-            },
-            {
-                "text": "When you stay silent, people can't read you.",
-                "visual_keywords": "man back view walking dark hallway",
-                "emphasis_word": "silent",
-            },
-            {
-                "text": "They can't predict your next move.",
-                "visual_keywords": "chess hand moving piece dark",
-                "emphasis_word": "predict",
-            },
-            {
-                "text": "And that makes you dangerous.",
-                "visual_keywords": "lion adult male dark wild savanna",
-                "emphasis_word": "dangerous",
-            },
-            {
-                "text": "Psychologists call this the power of ambiguity.",
-                "visual_keywords": "man silhouette dark shadow mysterious",
-                "emphasis_word": "ambiguity",
-            },
-            {
-                "text": "When people don't know what you're thinking,",
-                "visual_keywords": "dark smoke fog cinematic abstract",
-                "emphasis_word": "thinking",
-            },
-            {
-                "text": "they fill the gap with their own fears.",
-                "visual_keywords": "dark corridor shadows cinematic moody",
-                "emphasis_word": "fears",
-            },
-            {
-                "text": "Your silence becomes their anxiety.",
-                "visual_keywords": "rain dark window cinematic night drops",
-                "emphasis_word": "anxiety",
-            },
-            {
-                "text": "The loud ones? They expose everything.",
-                "visual_keywords": "dark city crowd night aerial",
-                "emphasis_word": "expose",
-            },
-            {
-                "text": "Their emotions. Their insecurities. Their weaknesses.",
-                "visual_keywords": "boxing gloves gym dark punching bag",
-                "emphasis_word": "weaknesses",
-            },
-            {
-                "text": "But the silent ones? They observe.",
-                "visual_keywords": "wolf dark forest night walking",
-                "emphasis_word": "observe",
-            },
-            {
-                "text": "They calculate. They wait.",
-                "visual_keywords": "city skyline night dark rooftop cinematic",
-                "emphasis_word": "wait",
-            },
-            {
-                "text": "And when they finally speak, the whole room listens.",
-                "visual_keywords": "dark boardroom empty table cinematic",
-                "emphasis_word": "listens",
-            },
-            {
-                "text": "This is why silence is the language of the strong.",
-                "visual_keywords": "dark mountain peak clouds cinematic",
-                "emphasis_word": "strong",
-            },
-            {
-                "text": "While others waste energy arguing, you conserve yours.",
-                "visual_keywords": "man training gym dark silhouette weights",
-                "emphasis_word": "conserve",
-            },
-            {
-                "text": "While they react, you respond with precision.",
-                "visual_keywords": "archer dark silhouette focus aim",
-                "emphasis_word": "precision",
-            },
-            {
-                "text": "That's power. Real power.",
-                "visual_keywords": "dark ocean storm waves cinematic",
-                "emphasis_word": "power",
-            },
-            {
-                "text": "The kind of power that no one can take from you.",
-                "visual_keywords": "dark storm clouds cinematic dramatic",
-                "emphasis_word": "take",
-            },
-            {
-                "text": "Because it comes from within.",
-                "visual_keywords": "dark fire flames cinematic abstract",
-                "emphasis_word": "within",
-            },
-            {
-                "text": "So starting today, choose silence over noise.",
-                "visual_keywords": "man meditating dark room calm",
-                "emphasis_word": "silence",
-            },
-            {
-                "text": "Choose discipline over emotion.",
-                "visual_keywords": "athlete running dark silhouette training",
-                "emphasis_word": "discipline",
-            },
-            {
-                "text": "Choose growth over approval.",
-                "visual_keywords": "dark workspace laptop night coding",
-                "emphasis_word": "growth",
-            },
-            {
-                "text": "The world will try to make you loud. Stay quiet.",
-                "visual_keywords": "dark city crowd night aerial busy",
-                "emphasis_word": "quiet",
-            },
-            {
-                "text": "You were built for greatness.",
-                "visual_keywords": "luxury dark car night driving cinematic",
-                "emphasis_word": "greatness",
-            },
-            {
-                "text": "Now go out there and prove it.",
-                "visual_keywords": "man walking away dark city silhouette night",
-                "emphasis_word": "prove",
-            },
-        ],
-
-        # =====================================================
-        # SCRIPT: Why high-value people walk alone
-        # ~26 segments, ~185 words -> ~70s at 2.62 wps
-        # =====================================================
-        "Why high-value people walk alone": [
-            {
-                "text": "If you're always alone, this message is for you.",
-                "visual_keywords": "man walking alone dark street night",
-                "emphasis_word": "alone",
-            },
-            {
-                "text": "High-value people don't have big friend groups.",
-                "visual_keywords": "solitary man dark aesthetic",
-                "emphasis_word": "High-value",
-            },
-            {
-                "text": "Not because they can't socialize.",
-                "visual_keywords": "crowd busy people dark city",
-                "emphasis_word": "socialize",
-            },
-            {
-                "text": "But because they refuse to lower their standards.",
-                "visual_keywords": "man in suit looking down dark",
-                "emphasis_word": "standards",
-            },
-            {
-                "text": "They've learned that most people drain your energy.",
-                "visual_keywords": "tired person dark room moody",
-                "emphasis_word": "drain",
-            },
-            {
-                "text": "Most people gossip instead of building.",
-                "visual_keywords": "people whispering dark scene",
-                "emphasis_word": "gossip",
-            },
-            {
-                "text": "They complain instead of creating.",
-                "visual_keywords": "dark workspace laptop night",
-                "emphasis_word": "creating",
-            },
-            {
-                "text": "And they criticize instead of growing.",
-                "visual_keywords": "plant growing dark time lapse",
-                "emphasis_word": "growing",
-            },
-            {
-                "text": "A lion doesn't lose sleep over the opinion of sheep.",
-                "visual_keywords": "lion portrait dark dramatic",
-                "emphasis_word": "lion",
-            },
-            {
-                "text": "Your solitude is not loneliness.",
-                "visual_keywords": "man on mountain top dark sky",
-                "emphasis_word": "solitude",
-            },
-            {
-                "text": "It's a sign that you've outgrown your environment.",
-                "visual_keywords": "dark city skyline night cinematic",
-                "emphasis_word": "outgrown",
-            },
-            {
-                "text": "Every great person in history walked a lonely path.",
-                "visual_keywords": "dark road empty night cinematic",
-                "emphasis_word": "great",
-            },
-            {
-                "text": "They were misunderstood. They were doubted.",
-                "visual_keywords": "rain dark window cinematic night drops",
-                "emphasis_word": "doubted",
-            },
-            {
-                "text": "But they never stopped moving forward.",
-                "visual_keywords": "man running dark tunnel silhouette",
-                "emphasis_word": "forward",
-            },
-            {
-                "text": "And neither should you.",
-                "visual_keywords": "dark storm clouds cinematic dramatic",
-                "emphasis_word": "neither",
-            },
-            {
-                "text": "The right people will find you.",
-                "visual_keywords": "sunrise dark clouds dramatic",
-                "emphasis_word": "find",
-            },
-            {
-                "text": "But only when you stop settling for the wrong ones.",
-                "visual_keywords": "man walking away dramatic dark",
-                "emphasis_word": "settling",
-            },
-            {
-                "text": "So walk alone if you have to.",
-                "visual_keywords": "lone wolf dark forest",
-                "emphasis_word": "alone",
-            },
-            {
-                "text": "Protect your peace. Guard your energy.",
-                "visual_keywords": "dark ocean waves calm night",
-                "emphasis_word": "peace",
-            },
-            {
-                "text": "Because one day, they will all see what you were building in silence.",
-                "visual_keywords": "dark skyscraper night lights cinematic",
-                "emphasis_word": "building",
-            },
-            {
-                "text": "The loneliness you feel right now is temporary.",
-                "visual_keywords": "dark corridor shadows cinematic moody",
-                "emphasis_word": "temporary",
-            },
-            {
-                "text": "But the strength you are building is permanent.",
-                "visual_keywords": "man training gym dark silhouette weights",
-                "emphasis_word": "permanent",
-            },
-            {
-                "text": "Stay patient. Stay focused. Stay hungry.",
-                "visual_keywords": "man meditating dark room calm",
-                "emphasis_word": "hungry",
-            },
-            {
-                "text": "Your time is coming.",
-                "visual_keywords": "luxury dark car night driving cinematic",
-                "emphasis_word": "coming",
-            },
-            {
-                "text": "And when it does, you'll be ready.",
-                "visual_keywords": "man walking away dark city silhouette night",
-                "emphasis_word": "ready",
-            },
-        ],
-
-        # =====================================================
-        # SCRIPT: The art of not reacting
-        # ~27 segments, ~185 words -> ~70s at 2.62 wps
-        # =====================================================
-        "The art of not reacting": [
-            {
-                "text": "Stop reacting to everything. Here's why.",
-                "visual_keywords": "calm water dark reflection",
-                "emphasis_word": "reacting",
-            },
-            {
-                "text": "Every time you react emotionally, you give away your power.",
-                "visual_keywords": "chess king falling dark",
-                "emphasis_word": "power",
-            },
-            {
-                "text": "The person who made you angry now controls you.",
-                "visual_keywords": "puppet strings dark artistic",
-                "emphasis_word": "controls",
-            },
-            {
-                "text": "That's exactly what they wanted.",
-                "visual_keywords": "dark silhouette manipulation",
-                "emphasis_word": "wanted",
-            },
-            {
-                "text": "But when you don't react, something shifts.",
-                "visual_keywords": "still man dark room confident",
-                "emphasis_word": "shifts",
-            },
-            {
-                "text": "You become unpredictable.",
-                "visual_keywords": "dark fog mysterious cinematic",
-                "emphasis_word": "unpredictable",
-            },
-            {
-                "text": "And unpredictable people cannot be manipulated.",
-                "visual_keywords": "lion staring dark intense",
-                "emphasis_word": "manipulated",
-            },
-            {
-                "text": "Think about the people who tried to break you.",
-                "visual_keywords": "dark storm clouds cinematic dramatic",
-                "emphasis_word": "break",
-            },
-            {
-                "text": "They used your reactions against you.",
-                "visual_keywords": "chess dark hand moving piece strategic",
-                "emphasis_word": "reactions",
-            },
-            {
-                "text": "Every outburst was a victory for them.",
-                "visual_keywords": "dark boxing ring empty cinematic",
-                "emphasis_word": "victory",
-            },
-            {
-                "text": "But that ends now.",
-                "visual_keywords": "man standing dark silhouette powerful",
-                "emphasis_word": "now",
-            },
-            {
-                "text": "Train yourself to pause before you speak.",
-                "visual_keywords": "man meditating dark room",
-                "emphasis_word": "pause",
-            },
-            {
-                "text": "Breathe before you respond.",
-                "visual_keywords": "dark ocean waves slow motion",
-                "emphasis_word": "Breathe",
-            },
-            {
-                "text": "Let them wonder what you're thinking.",
-                "visual_keywords": "dark mysterious man silhouette window",
-                "emphasis_word": "wonder",
-            },
-            {
-                "text": "The most powerful response is no response at all.",
-                "visual_keywords": "empty dark room silence cinematic",
-                "emphasis_word": "powerful",
-            },
-            {
-                "text": "When you master this, nothing can touch you.",
-                "visual_keywords": "dark mountain peak clouds cinematic",
-                "emphasis_word": "master",
-            },
-            {
-                "text": "No opinion. No insult. No betrayal.",
-                "visual_keywords": "rain dark window cinematic night drops",
-                "emphasis_word": "betrayal",
-            },
-            {
-                "text": "You become untouchable.",
-                "visual_keywords": "wolf dark forest night walking",
-                "emphasis_word": "untouchable",
-            },
-            {
-                "text": "And that scares the people who once controlled you.",
-                "visual_keywords": "dark corridor shadows cinematic moody",
-                "emphasis_word": "scares",
-            },
-            {
-                "text": "Because they lost their power over you.",
-                "visual_keywords": "chess pieces dark cinematic board",
-                "emphasis_word": "lost",
-            },
-            {
-                "text": "So start today. Control your emotions.",
-                "visual_keywords": "man training gym dark silhouette weights",
-                "emphasis_word": "Control",
-            },
-            {
-                "text": "Let your silence do the talking.",
-                "visual_keywords": "dark city skyline night rooftop cinematic",
-                "emphasis_word": "silence",
-            },
-            {
-                "text": "Let your peace be your power.",
-                "visual_keywords": "dark ocean waves calm night cinematic",
-                "emphasis_word": "peace",
-            },
-            {
-                "text": "You are stronger than you think.",
-                "visual_keywords": "athlete running dark silhouette training",
-                "emphasis_word": "stronger",
-            },
-            {
-                "text": "You have survived every bad day so far.",
-                "visual_keywords": "dark fire flames cinematic abstract",
-                "emphasis_word": "survived",
-            },
-            {
-                "text": "And that's proof enough that you can handle anything.",
-                "visual_keywords": "luxury dark car night driving cinematic",
-                "emphasis_word": "anything",
-            },
-            {
-                "text": "Now go prove it to the world.",
-                "visual_keywords": "man walking away dark city silhouette night",
-                "emphasis_word": "prove",
-            },
-        ],
-
-        # =====================================================
-        # SCRIPT: The hidden envy around you
-        # ~24 segments, ~175 words -> ~70s at 0.68 speed
-        # Actual rate measured: 2.62 words/sec at 0.68 speed
-        # Concept: close people secretly jealous, move in silence
-        # =====================================================
-        "The hidden envy around you": [
-            {
-                "text": "The people clapping for you in public are the same ones praying for your downfall in private.",
-                "visual_keywords": "dark crowd silhouette night cinematic",
-                "emphasis_word": "downfall",
-            },
-            {
-                "text": "That's the truth nobody warns you about.",
-                "visual_keywords": "man silhouette dark shadow mysterious",
-                "emphasis_word": "truth",
-            },
-            {
-                "text": "Not every smile is genuine.",
-                "visual_keywords": "dark mask artistic cinematic moody",
-                "emphasis_word": "genuine",
-            },
-            {
-                "text": "Not every friend wants to see you win.",
-                "visual_keywords": "chess pieces dark cinematic board",
-                "emphasis_word": "win",
-            },
-            {
-                "text": "Some people stay close just to watch you fail.",
-                "visual_keywords": "dark corridor shadows cinematic moody",
-                "emphasis_word": "fail",
-            },
-            {
-                "text": "They don't celebrate your progress. They study it.",
-                "visual_keywords": "dark smoke fog cinematic abstract",
-                "emphasis_word": "study",
-            },
-            {
-                "text": "And quietly, they resent you for it.",
-                "visual_keywords": "rain dark window cinematic night drops",
-                "emphasis_word": "resent",
-            },
-            {
-                "text": "This is why you should never announce your plans.",
-                "visual_keywords": "man back view walking dark hallway",
-                "emphasis_word": "never",
-            },
-            {
-                "text": "Never reveal your next move.",
-                "visual_keywords": "chess hand moving piece dark strategic",
-                "emphasis_word": "reveal",
-            },
-            {
-                "text": "Share your dreams with the wrong person, and they will quietly work against you.",
-                "visual_keywords": "dark silhouette manipulation puppet",
-                "emphasis_word": "against",
-            },
-            {
-                "text": "They will disguise their jealousy as concern.",
-                "visual_keywords": "dark corridor shadows cinematic moody",
-                "emphasis_word": "jealousy",
-            },
-            {
-                "text": "So move in silence. Let your results make the noise.",
-                "visual_keywords": "lion adult male dark wild savanna",
-                "emphasis_word": "silence",
-            },
-            {
-                "text": "Work when nobody is watching.",
-                "visual_keywords": "man training gym dark silhouette weights",
-                "emphasis_word": "Work",
-            },
-            {
-                "text": "Build when nobody believes in you.",
-                "visual_keywords": "dark workspace laptop night coding",
-                "emphasis_word": "Build",
-            },
-            {
-                "text": "Let discipline be your voice.",
-                "visual_keywords": "athlete running dark silhouette training",
-                "emphasis_word": "discipline",
-            },
-            {
-                "text": "And let your success be your loudest answer.",
-                "visual_keywords": "luxury dark car night driving cinematic",
-                "emphasis_word": "success",
-            },
-            {
-                "text": "One day, everyone who doubted you will wish they believed in you sooner.",
-                "visual_keywords": "dark city skyline night rooftop cinematic",
-                "emphasis_word": "believed",
-            },
-            {
-                "text": "But by then, you won't need their approval.",
-                "visual_keywords": "man standing dark silhouette powerful rooftop",
-                "emphasis_word": "approval",
-            },
-            {
-                "text": "Because you learned to trust yourself when no one else did.",
-                "visual_keywords": "dark mountain peak clouds cinematic",
-                "emphasis_word": "yourself",
-            },
-            {
-                "text": "You don't need anyone's permission to become great.",
-                "visual_keywords": "wolf dark forest night walking powerful",
-                "emphasis_word": "great",
-            },
-            {
-                "text": "Keep going. Silently. Relentlessly. Unstoppably.",
-                "visual_keywords": "man walking away dark city silhouette night",
-                "emphasis_word": "Unstoppably",
-            },
-        ],
-
-        # =====================================================
-        # SCRIPT: Comfort is killing your potential
-        # ~24 segments, ~170 words -> ~72s at 2.35 wps (0.83 speed)
-        # Arc: comfort trap (warm) → wake-up call → action (dark)
-        # =====================================================
-        "Comfort is killing your potential": [
-            {
-                "text": "Comfort is the biggest threat to your growth.",
-                "visual_keywords": "person sitting couch scrolling phone lazy",
-                "emphasis_word": "threat",
-            },
-            {
-                "text": "It doesn't look dangerous.",
-                "visual_keywords": "cozy bed blanket coffee morning warm",
-                "emphasis_word": "dangerous",
-            },
-            {
-                "text": "It feels safe. It feels easy.",
-                "visual_keywords": "comfortable room relaxing sofa calm",
-                "emphasis_word": "easy",
-            },
-            {
-                "text": "But slowly, it keeps you exactly where you are.",
-                "visual_keywords": "person sitting alone dark room still",
-                "emphasis_word": "exactly",
-            },
-            {
-                "text": "Day after day. Week after week. Nothing changes.",
-                "visual_keywords": "time lapse room day night light changing",
-                "emphasis_word": "Nothing",
-            },
-            {
-                "text": "Your brain is wired to avoid pain.",
-                "visual_keywords": "person staring blankly dark abstract moody",
-                "emphasis_word": "wired",
-            },
-            {
-                "text": "It chooses comfort over progress. Every single time.",
-                "visual_keywords": "person closing laptop procrastination dark",
-                "emphasis_word": "progress",
-            },
-            {
-                "text": "That's the trap.",
-                "visual_keywords": "clock ticking close up dark cinematic",
-                "emphasis_word": "trap",
-            },
-            {
-                "text": "You keep telling yourself tomorrow.",
-                "visual_keywords": "calendar pages flipping time passing fast",
-                "emphasis_word": "tomorrow",
-            },
-            {
-                "text": "But tomorrow never comes.",
-                "visual_keywords": "crowd walking fast motion city busy dark",
-                "emphasis_word": "never",
-            },
-            {
-                "text": "You don't feel it at first.",
-                "visual_keywords": "person tired dark moody exhausted fading",
-                "emphasis_word": "feel",
-            },
-            {
-                "text": "Your energy drops. Your standards drop.",
-                "visual_keywords": "messy room dark abandoned unused",
-                "emphasis_word": "standards",
-            },
-            {
-                "text": "And one day you wake up and realize years have passed.",
-                "visual_keywords": "mirror reflection man staring dark moody",
-                "emphasis_word": "years",
-            },
-            {
-                "text": "Nothing changed. Because you never did.",
-                "visual_keywords": "empty room dark silence cinematic",
-                "emphasis_word": "changed",
-            },
-            {
-                "text": "So how do you break free?",
-                "visual_keywords": "dark screen man eye contact intense close",
-                "emphasis_word": "free",
-            },
-            {
-                "text": "You choose discomfort. On purpose.",
-                "visual_keywords": "person waking up dark room early morning",
-                "emphasis_word": "discomfort",
-            },
-            {
-                "text": "You wake up when your body says stay in bed.",
-                "visual_keywords": "cold shower water dark morning cinematic",
-                "emphasis_word": "wake",
-            },
-            {
-                "text": "You train when your mind says rest.",
-                "visual_keywords": "gym training dark silhouette weights heavy",
-                "emphasis_word": "train",
-            },
-            {
-                "text": "You work when nobody is watching.",
-                "visual_keywords": "working alone laptop dark night focused",
-                "emphasis_word": "work",
-            },
-            {
-                "text": "You push through when everything tells you to stop.",
-                "visual_keywords": "running rain dark cinematic intense",
-                "emphasis_word": "push",
-            },
-            {
-                "text": "Because greatness was never built in comfort.",
-                "visual_keywords": "athlete training dark intense powerful",
-                "emphasis_word": "greatness",
-            },
-            {
-                "text": "It was built in the moments you wanted to quit but didn't.",
-                "visual_keywords": "man pushing through dark training exhausted",
-                "emphasis_word": "quit",
-            },
-            {
-                "text": "So start now. Not tomorrow. Right now.",
-                "visual_keywords": "man tying shoes dark morning workout ready",
-                "emphasis_word": "now",
-            },
-            {
-                "text": "Your future self is counting on you.",
-                "visual_keywords": "man walking forward sunrise silhouette dark cinematic",
-                "emphasis_word": "counting",
-            },
-        ],
-
-    }
-
-    # --- Return matching script or default ---
-    if topic in scripts:
-        return scripts[topic]
-
-    # --- Fallback: return the silence and power script ---
-    return scripts["The psychology of silence and power"]
-
-
-def get_all_visual_keywords(script):
-    """
-    # Extracts all visual keywords from a script
-    # Used to batch-download footage before assembly
-    """
-    return [segment["visual_keywords"] for segment in script]
-
+# ============================================================
+# UTILITY FUNCTIONS
+# Small helpers used by other modules
+# ============================================================
 
 def get_script_text(script):
     """
-    # Returns the full script as a single string
-    # Used for generating the voiceover
+    # Returns the full script as a single string.
+    # Used by the voiceover module to send to ElevenLabs.
+    #
+    # Args:
+    #   script (list[dict]): list of segment dicts
+    #
+    # Returns: full script text as one string (space-separated)
     """
     return " ".join([segment["text"] for segment in script])
 
 
-# --- Quick test ---
+def get_all_visual_keywords(script):
+    """
+    # Extracts all visual keywords from a script.
+    # Used to batch-download footage before video assembly.
+    #
+    # Args:
+    #   script (list[dict]): list of segment dicts
+    #
+    # Returns: list of visual keyword strings, one per segment
+    """
+    return [segment["visual_keywords"] for segment in script]
+
+
+# ============================================================
+# QUICK TEST — run this file directly to check it works
+# python script_generator.py
+# ============================================================
 if __name__ == "__main__":
-    script, topic = generate_script("The psychology of silence and power")
-    print(f"\nTopic: {topic}")
-    print(f"Segments: {len(script)}")
-    print(f"\nFull script:\n{get_script_text(script)}")
+    # --- Test history loading ---
+    print("\n--- Testing history loading ---")
+    history = load_generated_history()
+    print(f"History entries: {len(history)}")
+
+    # --- Test hook validation ---
+    print("\n--- Testing hook validation ---")
+    print(f"'Life is about choices' → strong: {_is_strong_hook('Life is about choices')}")
+    print(f"'You were never meant to be average' → strong: {_is_strong_hook('You were never meant to be average')}")
+
+    # --- Test motion style heuristic ---
+    print("\n--- Testing motion style heuristic ---")
+    print(f"mountain landscape → {_infer_motion_style('mountain peak landscape clouds')}")
+    print(f"man running boxing → {_infer_motion_style('man running boxing training')}")
+    print(f"silhouette portrait → {_infer_motion_style('chess board silhouette portrait')}")
+
+    # --- Test emergency script ---
+    print("\n--- Testing emergency fallback ---")
+    emergency = _build_emergency_script("Power of Silence", num_segments=5)
+    print(f"Emergency segments: {len(emergency)}")
+    print(f"First segment: {emergency[0]['text']}")
+    for seg in emergency:
+        assert "motion_style" in seg
+        assert "transition" in seg
+    print("All emergency segments have motion_style and transition ✓")
