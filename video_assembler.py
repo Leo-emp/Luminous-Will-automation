@@ -331,6 +331,10 @@ def create_base_video(visual_timeline, total_duration, profile, script_segments=
     graded_paths = []
     actual_duration = 0.0
 
+    # --- Pull crossfade duration from profile (default: 1.0s) ---
+    # Used when _get_transition_type returns "crossfade" for a clip
+    crossfade_duration = profile.get("crossfade_duration", 1.0)
+
     for idx, entry in enumerate(visual_timeline):
         needed = entry["duration"]
         if needed <= 0:
@@ -365,6 +369,34 @@ def create_base_video(visual_timeline, total_duration, profile, script_segments=
                     clip = _apply_ken_burns(clip, kb_params, frame_w, frame_h)
                     print(f"[ASSEMBLER] Ken Burns: {motion_style} on clip {idx+1}/{len(visual_timeline)}")
                 # If kb_params is None (static), no transform is applied
+
+            # --- Apply context-aware transition to start of this clip ---
+            # Look up previous segment (None for the first clip) and determine
+            # whether to fade in from black (crossfade) or start instantly (cut).
+            #
+            # _get_transition_type priority:
+            #   1. Explicit "transition" field on this segment
+            #   2. First clip (idx == 0) → always crossfade for clean open
+            #   3. Mood change vs previous segment → crossfade
+            #   4. Same mood → hard cut
+            prev_seg = script_segments_ref[idx - 1] if idx > 0 and idx < len(script_segments_ref) + 1 else None
+            curr_seg = script_segments_ref[idx] if idx < len(script_segments_ref) else None
+
+            transition_type = _get_transition_type(prev_seg, curr_seg)
+
+            if transition_type == "crossfade" and clip.duration > crossfade_duration:
+                # --- Apply a fade-in from black at the start of this clip ---
+                # CrossFadeIn creates a smooth dissolve from black over `crossfade_duration`
+                # seconds — the standard approach when each clip is written individually.
+                # For a true between-clip blend you'd need CompositeVideoClip; for the
+                # single-file-per-clip pipeline, CrossFadeIn (fade from black) is the
+                # correct and efficient approach.
+                clip = clip.with_effects([vfx.CrossFadeIn(crossfade_duration)])
+                print(f"[ASSEMBLER] Transition: crossfade ({crossfade_duration}s) on clip {idx+1}/{len(visual_timeline)}")
+            else:
+                # Hard cut: no effect applied — clip starts at full opacity instantly
+                if transition_type == "cut":
+                    print(f"[ASSEMBLER] Transition: cut (hard) on clip {idx+1}/{len(visual_timeline)}")
 
             clip = clip.image_transform(grader)
 
@@ -535,6 +567,50 @@ def create_caption_overlay(caption_events, total_duration, profile=None):
         caption_clips.append(caption_clip)
 
     return caption_clips
+
+
+def _get_transition_type(prev_segment, current_segment):
+    """
+    # Determines what kind of transition to use between two consecutive clips.
+    # Returns "crossfade" (smooth blend) or "cut" (instant switch).
+    #
+    # Priority order — first matching rule wins:
+    #   1. Explicit "transition" field on current_segment → use it directly
+    #   2. First segment (prev_segment is None) → crossfade for a clean open
+    #   3. Mood changed between segments → crossfade (signals emotional shift)
+    #   4. Same mood continues → hard cut (keeps momentum / energy flowing)
+    #
+    # Args:
+    #   prev_segment    — dict with "mood" and optional "transition" keys,
+    #                     or None if current_segment is the very first clip
+    #   current_segment — dict with "mood" and optional "transition" keys
+    #
+    # Returns: "crossfade" | "cut"
+    """
+
+    # --- First segment: always crossfade for a professional clean open ---
+    # Avoids a hard cut from pure black at the very start of the video
+    if prev_segment is None:
+        return "crossfade"
+
+    # --- Explicit override: script generator can force a specific transition ---
+    # Supports "crossfade" or "cut" in the segment's "transition" field
+    explicit = current_segment.get("transition") if current_segment else None
+    if explicit in ("crossfade", "cut"):
+        return explicit
+
+    # --- Heuristic: compare mood of adjacent segments ---
+    # A mood change signals a tonal shift → use crossfade to smooth it
+    # Same mood continuing → hard cut preserves the clip energy / pace
+    prev_mood = prev_segment.get("mood", "")
+    curr_mood = current_segment.get("mood", "") if current_segment else ""
+
+    if prev_mood != curr_mood:
+        # Emotional shift between segments → blend with a crossfade
+        return "crossfade"
+    else:
+        # Same emotional energy continues → snap hard cut keeps momentum
+        return "cut"
 
 
 def _get_ken_burns_params(motion_style, duration):

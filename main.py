@@ -62,10 +62,16 @@ def validate_setup():
 
 
 
-def run_pipeline(topic=None, video_format=None):
+def run_pipeline(topic=None, video_format=None, quality="1080p"):
     """
     # Main pipeline: runs all steps in sequence
-    # Accepts video_format for dual-format support
+    # Accepts video_format for dual-format support and quality for resolution override.
+    #
+    # Args:
+    #   topic        — string topic for script generation, or None for random
+    #   video_format — VideoFormat enum (short/long), defaults to VERTICAL_SHORT
+    #   quality      — "1080p" (default) or "4k" (premium high-resolution output)
+    #                  4K applies QUALITY_4K resolution overrides from config
     """
 
     from config import VideoFormat, get_format_profile
@@ -73,12 +79,16 @@ def run_pipeline(topic=None, video_format=None):
     if video_format is None:
         video_format = VideoFormat.VERTICAL_SHORT
 
-    profile = get_format_profile(video_format)
+    # --- Load format profile with optional 4K overrides ---
+    # quality="4k" triggers the QUALITY_4K dict overrides in config.get_format_profile
+    profile = get_format_profile(video_format, quality=quality)
 
     start_time = time.time()
     print("\n" + "=" * 60)
     print("  LUMINOUS WILL - VIDEO PIPELINE")
     print(f"  Format: {video_format.value} ({profile['width']}x{profile['height']})")
+    # --- Show quality mode so the user knows if 4K is active ---
+    print(f"  Quality: {profile.get('quality', '1080p').upper()}")
     print("=" * 60)
 
     # --- STEP 1: VALIDATE ---
@@ -177,6 +187,12 @@ if __name__ == "__main__":
     parser.add_argument("topic", nargs="?", default=None, help="Video topic")
     parser.add_argument("--format", choices=["short", "long"], default="short",
                         help="Video format: short (9:16, 60-90s) or long (16:9, 8-12min)")
+    # --- 4K quality flag (Task 7) ---
+    # Default is 1080p; passing --quality 4k activates premium resolution overrides.
+    # 4K roughly 4x the pixel count (2160x3840 vertical, 3840x2160 horizontal),
+    # higher bitrate (30000k), and significantly longer encode time.
+    parser.add_argument("--quality", choices=["1080p", "4k"], default="1080p",
+                        help="Output quality: 1080p (default) or 4k (premium, slower encode)")
     parser.add_argument("--list", action="store_true", help="List available topics")
     args = parser.parse_args()
 
@@ -185,4 +201,5 @@ if __name__ == "__main__":
     else:
         from config import VideoFormat
         fmt = VideoFormat.HORIZONTAL_LONG if args.format == "long" else VideoFormat.VERTICAL_SHORT
-        run_pipeline(topic=args.topic, video_format=fmt)
+        # --- Pass quality through to the pipeline so profile is built correctly ---
+        run_pipeline(topic=args.topic, video_format=fmt, quality=args.quality)
