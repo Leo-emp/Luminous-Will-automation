@@ -393,6 +393,98 @@ Looks like a designer made it in Photoshop — not auto-generated. Should compet
 
 ---
 
+## 14. Review Dashboard Upgrade
+
+### Current problems
+- No video player — can't watch before approving
+- No thumbnail preview
+- No caption/metadata preview — approving blind
+- Tiny cards, hard to evaluate quality
+
+### Upgraded review card layout
+```
+┌──────────────────────────────────────────────────────┐
+│  ┌─────────┐  Topic: "Power of Silence"              │
+│  │         │  Format: 9:16 Short · 72s               │
+│  │  VIDEO  │  Created: 24 Jun, 3:00 AM               │
+│  │ PLAYER  │  Platforms: TikTok, Instagram, Facebook  │
+│  │         │  Status: ● Pending Review                │
+│  └─────────┘                                          │
+│                                                        │
+│  ┌──────────┐  Captions:                              │
+│  │THUMBNAIL │  [TikTok] [Instagram] [YouTube]         │
+│  │ PREVIEW  │  ─────────────────────────────          │
+│  └──────────┘  Your silence terrifies them.           │
+│                That's the point.                       │
+│                #darkmotivation #silence ...            │
+│                                          [Edit]        │
+│                                                        │
+│  [▶ View Script]                                       │
+│                                                        │
+│  [  ✓ APPROVE  ]              [  ✗ REJECT  ]          │
+└──────────────────────────────────────────────────────┘
+```
+
+### Features
+- **Embedded video player** — watch the full video in-card before approving
+- **Thumbnail preview** — see the generated thumbnail alongside the video
+- **Platform caption tabs** — TikTok / Instagram / YouTube captions shown in tabs
+- **Inline edit** — edit captions, title, hashtags before approving
+- **Script preview** — expandable section showing full script text
+- **Large clear actions** — prominent Approve / Reject buttons with confirmation
+- **Metadata at a glance** — topic, format, duration, date, target platforms
+
+### Styling
+- Black background (#000), dark borders (#1a1a1a) — matches brand
+- Amber accent (#E8A817) for interactive elements
+- Inter font (already loaded)
+- Generous spacing, rounded corners
+- Responsive — works on phone for reviewing on the go
+
+---
+
+## 15. Automated Generation — GitHub Actions Cron
+
+### The problem
+The scheduler (`scheduler.py`) needs a Python process running 24/7 on your machine. If your laptop sleeps, generation stops. Nothing is truly automated.
+
+### Solution: GitHub Actions cron (free)
+A `.github/workflows/generate.yml` file in the `Luminous-Will-automation` repo that triggers video generation on a schedule by calling the HF Spaces API.
+
+### Schedule
+| Time (UTC) | Action |
+|---|---|
+| Daily 3:00 AM | Trigger short-form generation |
+| Monday 2:00 AM | Trigger long-form generation |
+| Thursday 2:00 AM | Trigger long-form generation |
+
+### Workflow steps
+1. **Wake HF Space** — send health check request (free tier sleeps after 15 min inactivity)
+2. **Wait 30-60s** — for Space to boot up
+3. **Call generation API** — HTTP POST to HF Spaces Gradio endpoint with format + topic params
+4. **Wait for completion** — poll until generation finishes
+5. **Verify queued** — confirm video was added to review queue
+
+### HF Spaces sleep handling
+- Free tier puts the Space to sleep after 15 min of no requests
+- Workflow first hits the Space URL to wake it, waits for 200 response
+- Then triggers generation — Space stays awake during the pipeline run (~5-10 min)
+
+### What this gives you
+Your daily workflow becomes:
+1. Wake up
+2. Open dashboard on your phone
+3. Video is already there (generated at 3 AM)
+4. Watch, review captions, approve or reject
+5. Done — total time: 2-3 minutes
+
+### No server, no cost
+- GitHub Actions free tier: 2000 minutes/month
+- Each trigger: ~1 min of Actions time (just sends HTTP requests)
+- Actual video generation runs on HF Spaces (free)
+
+---
+
 ## Files Modified
 
 | File | Changes |
@@ -415,13 +507,21 @@ Looks like a designer made it in Photoshop — not auto-generated. Should compet
 |---|---|
 | `assets/fonts/Montserrat-Bold.ttf` | Custom caption font + thumbnail font (Google Fonts, free) |
 | `generated_history.json` | Tracks all generated video topics + hooks + angles (pre-seeded with 17 existing videos) |
+| `.github/workflows/generate.yml` | GitHub Actions cron — triggers daily short + Mon/Thu long generation |
+
+## Modified (Web App — `luminous-will-web`)
+
+| File | Changes |
+|---|---|
+| `app/dashboard/page.tsx` | Full rewrite: video player, thumbnail preview, caption tabs, inline edit, script preview |
+| `app/api/queue/route.ts` | Return video URL + thumbnail URL + caption data for dashboard |
+| `app/api/queue/[id]/approve/route.ts` | Accept edited captions on approve |
 
 ## No Changes To
 
 | File | Reason |
 |---|---|
 | `brand_reference.py` | Brand rules unchanged |
-| `queue_manager.py` | Scheduling unchanged |
-| `scheduler.py` | Scheduling unchanged |
+| `queue_manager.py` | Queue data structure unchanged (already stores metadata) |
 | `publisher.py` | Publishing unchanged |
 | Platform adapters | Upload logic unchanged |
