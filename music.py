@@ -35,6 +35,16 @@ import config
 # --- Valid mood categories (must match script_generator output) ---
 VALID_MOODS = {"dark", "intense", "reflective", "powerful"}
 
+# --- Storyblocks music search queries per mood ---
+# Used when Storyblocks API keys are configured — premium library first priority
+# These queries are tuned for dark cinematic motivation content
+STORYBLOCKS_MOOD_QUERIES = {
+    "dark": "dark ambient cinematic suspense",
+    "intense": "intense epic cinematic trailer",
+    "reflective": "reflective cinematic piano",
+    "powerful": "powerful epic triumphant orchestra",
+}
+
 # --- Freesound search queries per mood ---
 # Used only as last-resort fallback when no local tracks exist
 FREESOUND_MOOD_QUERIES = {
@@ -145,21 +155,37 @@ def select_music(script_segments, music_dir=None):
     """
     # Selects the best background music for a video based on script mood
     #
-    # Priority:
-    #   1. Local track matching the dominant mood
-    #   2. Local track from "general" pool
-    #   3. Freesound API download (mood-specific search)
+    # Priority chain (highest to lowest quality):
+    #   1. Epidemic Sound API   — premium licensed music (placeholder, future)
+    #   2. Storyblocks API      — premium stock music library
+    #   3. Local mood-matched   — hand-curated tracks in mood subfolders
+    #   4. Local general pool   — hand-curated tracks in general/root folder
+    #   5. Any local track      — whatever is available locally
+    #   6. Freesound API        — free/Creative Commons tracks as last resort
     #
-    # Returns: file path to the selected track, or None
+    # Premium APIs are skipped silently when API keys are not configured
+    # Returns: file path to the selected track, or None if all sources fail
     """
     if music_dir is None:
         music_dir = config.MUSIC_DIR
 
-    # --- Determine the video's dominant mood ---
+    # --- Determine the video's dominant mood from script segments ---
     dominant_mood = get_dominant_mood(script_segments)
     print(f"[MUSIC] Dominant mood: {dominant_mood}")
 
-    # --- Scan local library ---
+    # --- Priority 1: Epidemic Sound (placeholder — returns None until implemented) ---
+    epidemic_query = STORYBLOCKS_MOOD_QUERIES.get(dominant_mood, "cinematic dark ambient")
+    epidemic_result = _epidemic_sound_search(epidemic_query)
+    if epidemic_result:
+        print(f"[MUSIC] Epidemic Sound track selected")
+        return epidemic_result
+
+    # --- Priority 2: Storyblocks premium music library ---
+    storyblocks_result = _storyblocks_music_fallback(dominant_mood, music_dir)
+    if storyblocks_result:
+        return storyblocks_result
+
+    # --- Scan local music library for priorities 3-5 ---
     tracks = scan_local_tracks(music_dir)
 
     total_local = sum(len(v) for v in tracks.values())
@@ -168,28 +194,128 @@ def select_music(script_segments, music_dir=None):
           f"reflective={len(tracks['reflective'])}, powerful={len(tracks['powerful'])}, "
           f"general={len(tracks['general'])})")
 
-    # --- Priority 1: mood-matched track ---
+    # --- Priority 3: mood-matched local track ---
     if tracks[dominant_mood]:
         selected = random.choice(tracks[dominant_mood])
         print(f"[MUSIC] Selected ({dominant_mood}): {os.path.basename(selected)}")
         return selected
 
-    # --- Priority 2: general pool ---
+    # --- Priority 4: general local pool ---
     if tracks["general"]:
         selected = random.choice(tracks["general"])
         print(f"[MUSIC] No {dominant_mood} tracks, using general: {os.path.basename(selected)}")
         return selected
 
-    # --- Priority 3: any local track from any mood ---
+    # --- Priority 5: any local track from any mood ---
     all_tracks = [t for pool in tracks.values() for t in pool]
     if all_tracks:
         selected = random.choice(all_tracks)
         print(f"[MUSIC] Using available track: {os.path.basename(selected)}")
         return selected
 
-    # --- Priority 4: Freesound fallback ---
+    # --- Priority 6: Freesound API last resort ---
     print(f"[MUSIC] No local tracks found, trying Freesound...")
     return _freesound_fallback(dominant_mood, music_dir)
+
+
+def _epidemic_sound_search(query):
+    """
+    # Placeholder for future Epidemic Sound integration
+    # Epidemic Sound requires a paid API partnership — reserved for future implementation
+    #
+    # Args:
+    #   query: search terms (e.g. "dark ambient")
+    #
+    # Returns: None always (not yet implemented)
+    """
+    # --- Return None immediately when no API key is configured ---
+    if not config.EPIDEMIC_SOUND_API_KEY:
+        return None
+    # TODO: implement when Epidemic Sound API access is obtained
+    # Their API requires a commercial partnership agreement
+    return None
+
+
+def _storyblocks_music_fallback(mood, output_dir):
+    """
+    # Searches Storyblocks premium music library for a mood-matched track
+    # Downloads the first result and saves it to output_dir
+    #
+    # Only active when STORYBLOCKS_API_KEY + STORYBLOCKS_API_SECRET are set
+    # Falls back silently to None when keys are absent or download fails
+    #
+    # Args:
+    #   mood: one of "dark", "intense", "reflective", "powerful"
+    #   output_dir: directory to save the downloaded track file
+    #
+    # Returns: file path string on success, None on failure
+    """
+    # --- Import here to avoid circular imports at module level ---
+    from storyblocks import is_storyblocks_available, search_storyblocks_music
+
+    # --- Skip if Storyblocks credentials are not configured ---
+    if not is_storyblocks_available():
+        return None
+
+    # --- Map mood to search query, default to "intense" if mood not found ---
+    query = STORYBLOCKS_MOOD_QUERIES.get(mood, STORYBLOCKS_MOOD_QUERIES["intense"])
+    print(f"[MUSIC] Storyblocks: searching '{query}' for mood '{mood}'")
+
+    results = search_storyblocks_music(query)
+
+    if not results:
+        print(f"[MUSIC] Storyblocks: no music results returned")
+        return None
+
+    # --- Use the first result (Storyblocks returns best-match first) ---
+    track = results[0]
+
+    # --- Try preview_url first, then comp_download_url ---
+    # preview_url: watermarked preview (always available for search results)
+    # comp_download_url: licensed comp version (requires active subscription)
+    download_url = track.get("preview_url") or track.get("comp_download_url")
+
+    if not download_url:
+        print(f"[MUSIC] Storyblocks: no download URL in track metadata")
+        return None
+
+    try:
+        # --- Download the audio file ---
+        response = requests.get(download_url, timeout=30)
+
+        if response.status_code != 200:
+            print(f"[MUSIC] Storyblocks: download returned HTTP {response.status_code}")
+            return None
+
+        # --- Ensure output directory exists ---
+        os.makedirs(output_dir, exist_ok=True)
+
+        # --- Build a safe filename from the track title ---
+        track_name = track.get("title", "storyblocks_track")[:50]
+        safe_name = "".join(
+            c if c.isalnum() or c in " -_" else "" for c in track_name
+        ).strip()
+
+        # --- Fall back to generic name if title sanitization produced nothing ---
+        file_path = os.path.join(output_dir, f"{safe_name or 'premium_track'}.mp3")
+
+        # --- Write raw bytes to disk ---
+        with open(file_path, "wb") as f:
+            f.write(response.content)
+
+        # --- Sanity check: reject suspiciously small files (< 50KB = likely error page) ---
+        if os.path.getsize(file_path) < 50000:
+            os.remove(file_path)
+            print(f"[MUSIC] Storyblocks: file too small, likely not a valid audio file")
+            return None
+
+        print(f"[MUSIC] Storyblocks: downloaded \"{track_name}\"")
+        return file_path
+
+    except Exception as e:
+        # --- Never crash the pipeline — log and return None ---
+        print(f"[MUSIC] Storyblocks music error: {e}")
+        return None
 
 
 def _freesound_fallback(mood, output_dir):
