@@ -230,7 +230,107 @@ Sample the first frame of each clip to measure average brightness:
 
 ---
 
+## 10. Script Generation Overhaul — Gemini for Both Formats
+
+### Goal
+Both short-form and long-form use Gemini for script generation. Scripts are fresh, trending, deeply personal, with viral hooks. Simple language everyone understands.
+
+### Delete
+- All 5 hardcoded template scripts
+- `get_template_script()` function
+- `HOOK_TEMPLATES` list
+- `_chain_template_scripts()` fallback
+- Keep a minimal emergency fallback (10 pre-written hooks + simple segments) only for when Gemini API is completely down
+
+### Topic Discovery
+Gemini generates 10 fresh topic ideas per batch based on:
+- Dark motivation / stoic philosophy / psychology of power niche
+- What's trending in self-improvement content
+- Emotional triggers: loneliness, betrayal, self-doubt, being underestimated, silent strength
+- Filter against `generated_history.json` to avoid exact repeats
+
+### Generated History — Fresh Angles, Not Banned Topics
+`generated_history.json` stores every generated video's topic + hook + angle summary:
+```json
+[
+  {"topic": "Power of Silence", "hook": "The most powerful people never raise their voice", "angle": "psychological authority through silence", "date": "2026-04-27"},
+  {"topic": "High value solitude", "hook": "If you're always alone, this message is for you", "angle": "loneliness as sign of outgrowing environment", "date": "2026-04-27"}
+]
+```
+
+Gemini's prompt includes this history with the instruction:
+> "You MAY revisit these topics but you MUST take a completely different angle and a different hook. Never repeat the same opening or narrative structure."
+
+**Pre-seeded with existing 17 videos:**
+1. Being average is not a choice
+2. Cheap Dopamine
+3. Comfort is a threat
+4. Debt of discipline
+5. Emotional Detachment
+6. Execution matters the most
+7. Focus on the present
+8. High value solitude
+9. How to achieve flow state
+10. Human Loyalty
+11. Master your emotions
+12. Power of Silence
+13. Procrastination
+14. Stop waiting too long
+15. The quiet leader vs the loud victim
+16. Validation
+17. Why real life feels boring now
+
+### Script Generation Prompt Rules
+- **Simple language** — max 8th grade reading level, no fancy words, no jargon
+- **Personal hooks** — use "you" constantly, make the viewer feel directly spoken to
+- **Emotional triggers** — loneliness, betrayal, self-doubt, being underestimated, silent strength
+- **Short punchy sentences** — max 15 words per segment
+- **Brand voice** — stoic, commanding, no fluff, no cliches ("grind", "hustle", "manifest"), dark intense energy
+
+### Hook Formula Patterns (embedded in Gemini prompt)
+```
+"If you [common painful experience], this is for you."
+"Nobody tells you this about [relatable topic]."
+"The reason you [common struggle] isn't what you think."
+"Stop [common mistake]. Here's why it's destroying you."
+"They don't want you to know this about [topic]."
+```
+
+### Short-form Script Structure (Gemini-generated)
+- 25 segments, 60-90 seconds
+- One strong hook → build tension → deliver truth → close with impact
+- Each segment: `text`, `visual_keywords`, `visual_keywords_alt`, `mood`, `emphasis_word`, `motion_style`, `transition`
+
+### Long-form Script Structure (Gemini-generated, unchanged)
+- 50 segments, 8-12 minutes
+- Narrative arc: hook → setup → escalation → climax → resolution → callback
+- Same fields as short-form plus `chapter` markers
+
+### Hook Validation
+- After generation, check that the first segment uses a strong personal hook pattern
+- If too generic (doesn't contain "you" or a direct emotional trigger), regenerate just the hook (cheap — one sentence)
+
+---
+
 ## Files Modified
+
+| File | Changes |
+|---|---|
+| `config.py` | New API keys, font config, dB mixing values, Ken Burns toggle, crossfade duration |
+| `captions.py` | Montserrat font, word-by-word reveal animation, time-aware rendering |
+| `video_assembler.py` | Ken Burns per clip, context-aware transitions, dB-based audio mixing, remove ducking |
+| `visuals.py` | Storyblocks search+download layer, scoring improvements (resolution, orientation, duration) |
+| `music.py` | Storyblocks music search layer, Epidemic Sound placeholder |
+| `voiceover.py` | Script text cleaning, post-download validation, pause trimming, timestamp recalculation |
+| `color_grading.py` | S-curve contrast, lift-gamma-gain, selective saturation, adaptive intensity |
+| `script_generator.py` | Full rewrite: Gemini for both formats, topic discovery, history tracking, hook validation |
+
+## New Files
+
+| File | Purpose |
+|---|---|
+| `assets/fonts/Montserrat-Bold.ttf` | Custom caption font (Google Fonts, free) |
+| `generated_history.json` | Tracks all generated video topics + hooks + angles (pre-seeded with 17 existing videos) |
 
 | File | Changes |
 |---|---|
