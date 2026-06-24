@@ -220,28 +220,61 @@ def create_grader(profile):
         img[:, :, 0] = lum + np.float32(sat_r) * (img[:, :, 0] - lum)
         img[:, :, 1] = lum + np.float32(sat_g) * (img[:, :, 1] - lum)
         img[:, :, 2] = lum + np.float32(sat_b) * (img[:, :, 2] - lum)
-        del lum  # free memory (frames are large)
+
+        # --- Preserve gold/amber tones (brand color range) ---
+        # Gold/warm tones live in the red-green overlap zone: R > G > B
+        # The per-channel multipliers above (sat_r=0.7, sat_g=0.6) mute golds
+        # because both their channels get reduced relative to each other.
+        # We detect warm pixels and apply a small +0.15 saturation boost back
+        # only to the R and G channels of those pixels, restoring the golden hue.
+        # Condition: R > G > B AND R > 0.15 (avoids boosting near-black pixels)
+        lum_arr = lum  # keep lum alive; we need it for the gold boost below
+        warm_mask = (
+            (img[:, :, 0] > img[:, :, 1]) &   # R > G (warm hue direction)
+            (img[:, :, 1] > img[:, :, 2]) &   # G > B (not a neutral/cool tone)
+            (img[:, :, 0] > np.float32(0.15))  # R bright enough to be visible gold
+        )
+        gold_boost = np.float32(0.15)          # small re-saturation amount for warmth
+        # Re-apply saturation for R and G on warm pixels using boosted factors
+        img[:, :, 0][warm_mask] = lum_arr[warm_mask] + np.float32(sat_r + gold_boost) * (img[:, :, 0][warm_mask] - lum_arr[warm_mask])
+        img[:, :, 1][warm_mask] = lum_arr[warm_mask] + np.float32(sat_g + gold_boost) * (img[:, :, 1][warm_mask] - lum_arr[warm_mask])
+        del lum_arr  # free memory (frames are large)
 
         # ----------------------------------------------------------------
         # Step 3: S-curve contrast
         # Film-quality contrast: darks go darker, lights go lighter
         # Strength is modulated by intensity so dark clips don't over-contrast
+        #
+        # config.CONTRAST_FACTOR is a multiplier around 1.0 (e.g. 1.20 = +20% contrast)
+        # Mapping: (CONTRAST_FACTOR - 1.0) * 3.0 converts it to a [0, 1] S-curve strength
+        #   CONTRAST_FACTOR=1.00 → s_base=0.00 (no contrast effect)
+        #   CONTRAST_FACTOR=1.20 → s_base=0.60 (standard cinematic punch)
+        #   CONTRAST_FACTOR=1.33 → s_base=1.00 (maximum S-curve)
+        # Then multiplied by adaptive intensity:
+        #   s_base × 0.8 = gentler for already-dark source
+        #   s_base × 1.0 = standard for medium source
+        #   s_base × 1.2 = more aggressive for bright source
         # ----------------------------------------------------------------
-        # Strength 0.6 × 0.8 = 0.48 for dark source (gentler)
-        # Strength 0.6 × 1.0 = 0.60 for medium source (standard)
-        # Strength 0.6 × 1.2 = 0.72 for bright source (more aggressive)
-        s_strength = 0.6 * intensity
+        s_base = (config.CONTRAST_FACTOR - 1.0) * 3.0   # map config scale → S-curve strength
+        s_strength = s_base * intensity                   # scale by adaptive intensity
         img = _s_curve_array(img, strength=s_strength)
 
         # ----------------------------------------------------------------
         # Step 4: Smooth shadow rolloff
-        # Instead of hard black crush (old: img[mask] *= 0.3),
-        # use a softer compression of sub-10% values
-        # Shadows are compressed to 50% of their value — retains detail
-        # while still achieving deep, rich blacks
+        # Instead of a hard binary mask (old: img[mask] *= 0.5 where img < 0.10),
+        # use a continuous linear ramp so the transition is gradual:
+        #   shadow_weight = clip(pixel / 0.10, 0, 1)
+        #   result = pixel * (0.5 + 0.5 * shadow_weight)
+        #
+        # Behaviour:
+        #   pixel = 0.00 → weight=0.0 → multiplier=0.50 (50% compression at pure black)
+        #   pixel = 0.05 → weight=0.5 → multiplier=0.75 (half-way compressed)
+        #   pixel = 0.10 → weight=1.0 → multiplier=1.00 (no compression at threshold)
+        #   pixel > 0.10 → weight=1.0 → multiplier=1.00 (unaffected above threshold)
+        # This smoothly rolls off into deep blacks without a visible crush edge
         # ----------------------------------------------------------------
-        shadow_mask = img < 0.10
-        img[shadow_mask] = img[shadow_mask] * np.float32(0.5)
+        shadow_weight = np.clip(img / np.float32(0.10), 0.0, 1.0)
+        img = img * (np.float32(0.5) + np.float32(0.5) * shadow_weight)
 
         # ----------------------------------------------------------------
         # Step 5: Split toning
