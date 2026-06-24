@@ -107,6 +107,16 @@ def _score_video_relevance(video_meta, script_text, keywords, source="pexels"):
         # Pexels user info sometimes has relevant tags
         user_name = str(video_meta.get("user", {}).get("name", "")).lower()
         video_text += " " + user_name
+    elif source == "storyblocks":
+        # Storyblocks: has title, keywords array, and description fields
+        video_text = str(video_meta.get("title", "")).lower()
+        video_text += " " + str(video_meta.get("description", "")).lower()
+        # Keywords may be a list — join them into a single string for matching
+        keywords_field = video_meta.get("keywords", [])
+        if isinstance(keywords_field, list):
+            video_text += " " + " ".join(keywords_field).lower()
+        else:
+            video_text += " " + str(keywords_field).lower()
     else:
         # Pixabay: has explicit tags field
         video_text = str(video_meta.get("tags", "")).lower()
@@ -130,6 +140,18 @@ def _score_video_relevance(video_meta, script_text, keywords, source="pexels"):
     # --- Score 3: Brand bonus (up to 2 points) ---
     brand_matches = BRAND_BONUS_WORDS & video_words
     score += min(len(brand_matches) * 0.4, 2.0)
+
+    # --- Score 4: Resolution bonus (added for premium source quality signal) ---
+    # 4K footage gets +1.0, HD gets +0.5, below 720p gets a heavy -3.0 penalty
+    # This incentivises the pipeline to prefer higher-quality clips from any source
+    width = video_meta.get("width", 0)
+    height = video_meta.get("height", 0)
+    if width >= 3840 or height >= 3840:
+        score += 1.0   # 4K bonus — cinematic quality, worth prioritising
+    elif width >= 1920 or height >= 1920:
+        score += 0.5   # HD bonus — good baseline quality
+    elif width < 720 and height < 720 and width > 0:
+        score -= 8.0   # Below 720p penalty — hard rejection for sub-HD footage
 
     # --- Penalty: avoid keywords reduce score ---
     for bad in AVOID_KEYWORDS:
@@ -301,6 +323,7 @@ def search_and_download_videos(script_segments, output_dir, profile=None):
     # --- Track used video IDs per source so we don't reuse clips ---
     used_pexels_ids = set()
     used_pixabay_ids = set()
+    used_storyblocks_ids = set()   # premium source — tracked separately
 
     # --- Check which APIs are available ---
     has_pexels = bool(config.PEXELS_API_KEY)
@@ -358,6 +381,17 @@ def search_and_download_videos(script_segments, output_dir, profile=None):
         all_candidates = []
 
         for q_idx, query in enumerate(queries):
+            # --- Try Storyblocks first (premium footage, highest quality) ---
+            # Only runs when STORYBLOCKS_API_KEY and STORYBLOCKS_API_SECRET are set
+            # Import is deferred here to keep storyblocks.py optional at module level
+            from storyblocks import is_storyblocks_available, search_storyblocks_video, download_storyblocks_video
+            if is_storyblocks_available():
+                sb_results = search_storyblocks_video(query, orientation, used_storyblocks_ids)
+                for video_meta in sb_results[:5]:
+                    # --- Score against the script segment (same scoring as other sources) ---
+                    score = _score_video_relevance(video_meta, script_text, keywords, source="storyblocks")
+                    all_candidates.append((score, video_meta, "storyblocks"))
+
             # --- Search Pexels ---
             if has_pexels:
                 pexels_results = _search_pexels_candidates(query, used_pexels_ids, orientation)
@@ -387,7 +421,12 @@ def search_and_download_videos(script_segments, output_dir, profile=None):
 
             # --- Try downloading the highest-scored candidates ---
             for score, video_meta, source in all_candidates[:5]:
-                if source == "pexels":
+                if source == "storyblocks":
+                    # --- Premium: use Storyblocks downloader ---
+                    used_storyblocks_ids.add(video_meta.get("id"))
+                    from storyblocks import download_storyblocks_video
+                    video_path = download_storyblocks_video(video_meta, output_dir, i)
+                elif source == "pexels":
                     used_pexels_ids.add(video_meta["id"])
                     video_path = _download_pexels_video(video_meta, output_dir, i)
                 else:
