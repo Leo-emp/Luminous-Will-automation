@@ -142,7 +142,7 @@ def _score_video_relevance(video_meta, script_text, keywords, source="pexels"):
     score += min(len(brand_matches) * 0.4, 2.0)
 
     # --- Score 4: Resolution bonus (added for premium source quality signal) ---
-    # 4K footage gets +1.0, HD gets +0.5, below 720p gets a heavy -3.0 penalty
+    # 4K footage gets +1.0, HD gets +0.5, below 720p gets a heavy -8.0 penalty
     # This incentivises the pipeline to prefer higher-quality clips from any source
     width = video_meta.get("width", 0)
     height = video_meta.get("height", 0)
