@@ -26,3 +26,6 @@ google-api-python-client>=2.0.0   # YouTube Data API v3
 google-auth-oauthlib>=1.0.0       # Google OAuth2 flow
 requests-oauthlib>=1.3.0          # OAuth2 for TikTok/Facebook
 schedule>=1.2.0                    # Cron-style scheduler
+
+# --- Testing ---
+pytest>=7.0.0               # unit testing

@@ -18,63 +18,111 @@ FREESOUND_API_KEY = os.getenv("FREESOUND_API_KEY", "").strip()
 # --- Gemini API Key ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
+# --- Premium API Keys (optional — pipeline works without these) ---
+# Storyblocks: premium stock footage + music
+STORYBLOCKS_API_KEY = os.getenv("STORYBLOCKS_API_KEY", "").strip()
+STORYBLOCKS_API_SECRET = os.getenv("STORYBLOCKS_API_SECRET", "").strip()
+# Epidemic Sound: premium music (future slot)
+EPIDEMIC_SOUND_API_KEY = os.getenv("EPIDEMIC_SOUND_API_KEY", "").strip()
+
 # --- Video Format System ---
 # Each format has its own resolution, bitrate, caption style, and search orientation
 class VideoFormat(Enum):
-    VERTICAL_SHORT = "short"    # 9:16, 60-90s, template scripts
-    HORIZONTAL_LONG = "long"    # 16:9, 8-12 min, Gemini scripts
+    VERTICAL_SHORT = "short"    # 9:16, 60-90s
+    HORIZONTAL_LONG = "long"    # 16:9, 8-12 min
 
 # --- Format Profiles ---
 # Each profile contains ALL format-specific settings
 FORMAT_PROFILES = {
     VideoFormat.VERTICAL_SHORT: {
+        # --- Resolution & output ---
         "width": 1080,
         "height": 1920,
         "fps": 30,
         "bitrate": "12000k",
+        "quality": "1080p",                  # default quality, overridable with --quality 4k
+        # --- Search ---
         "pexels_orientation": "portrait",
         "duration_range": (60, 90),
+        # --- Captions ---
         "caption_font_size": 65,
         "caption_position_y": 0.83,
         "caption_stroke_width": 2,
+        # --- Color grading ---
         "brightness_factor": 0.55,
         "saturation_factor": 0.45,
-        "music_volume": 0.32,
-        "music_mode": "flat",
-        "transition_type": "cut",
-        "transition_duration": 0.0,
+        # --- Audio mixing (dB-based) ---
+        "voiceover_boost_db": 1.5,           # +1.5 dB boost for voice clarity
+        "music_level_db": -9,                # -9 dB constant, no ducking
+        # --- Ken Burns ---
+        "ken_burns_enabled": True,           # global toggle for motion effects
+        # --- Transitions ---
+        "transition_type": "mixed",          # "mixed" = per-segment crossfade or cut
+        "crossfade_duration": 1.0,           # seconds for crossfade transitions
+        # --- Clips ---
         "clip_duration_range": (2.5, 10),
+        # --- Voice ---
         "voice_stability": 0.62,
-        "script_source": "template",
+        "script_source": "gemini",           # now gemini for both formats
     },
     VideoFormat.HORIZONTAL_LONG: {
+        # --- Resolution & output ---
         "width": 1920,
         "height": 1080,
         "fps": 30,
         "bitrate": "15000k",
+        "quality": "1080p",
+        # --- Search ---
         "pexels_orientation": "landscape",
         "duration_range": (480, 720),
+        # --- Captions ---
         "caption_font_size": 48,
         "caption_position_y": 0.88,
         "caption_stroke_width": 3,
+        # --- Color grading ---
         "brightness_factor": 0.60,
         "saturation_factor": 0.45,
-        "music_volume": 0.25,
-        "music_mode": "ducking",
-        "music_volume_high": 0.45,
-        "music_duck_ramp": 0.3,
-        "transition_type": "crossfade",
-        "transition_duration": 0.5,
+        # --- Audio mixing (dB-based) ---
+        "voiceover_boost_db": 1.5,
+        "music_level_db": -9,
+        # --- Ken Burns ---
+        "ken_burns_enabled": True,
+        # --- Transitions ---
+        "transition_type": "mixed",
+        "crossfade_duration": 1.0,
+        # --- Clips ---
         "clip_duration_range": (8, 15),
+        # --- Voice ---
         "voice_stability": 0.55,
         "script_source": "gemini",
     },
 }
 
+# --- 4K Resolution Overrides ---
+# Applied when --quality 4k is passed
+QUALITY_4K = {
+    VideoFormat.VERTICAL_SHORT: {
+        "width": 2160,
+        "height": 3840,
+        "bitrate": "30000k",
+        "quality": "4k",
+    },
+    VideoFormat.HORIZONTAL_LONG: {
+        "width": 3840,
+        "height": 2160,
+        "bitrate": "30000k",
+        "quality": "4k",
+    },
+}
 
-def get_format_profile(fmt: VideoFormat) -> dict:
+
+def get_format_profile(fmt: VideoFormat, quality: str = "1080p") -> dict:
     # Returns the full settings profile for a given format
-    return FORMAT_PROFILES[fmt]
+    # If quality="4k", applies 4K resolution overrides
+    profile = dict(FORMAT_PROFILES[fmt])
+    if quality == "4k" and fmt in QUALITY_4K:
+        profile.update(QUALITY_4K[fmt])
+    return profile
 
 
 # --- ElevenLabs Voice Settings ---
@@ -107,6 +155,11 @@ CAPTION_POSITION = ("center", 0.83)  # 83% from top (measured: 83.2%)
 CAPTION_STROKE_COLOR = "black"
 CAPTION_STROKE_WIDTH = 2     # thinner stroke for cleaner look (matched from videos)
 
+# --- Font paths ---
+# Montserrat Bold for premium captions and thumbnails
+# Falls back to Arial Bold if not found
+CAPTION_FONT_FILE = os.path.join(os.path.dirname(__file__), "assets", "fonts", "Montserrat-Bold.ttf")
+
 # --- Color Grading (dark aesthetic) ---
 # Measured from actual videos:
 #   Avg brightness: 24% (V channel ~61/255) -> very dark
@@ -116,7 +169,7 @@ BRIGHTNESS_FACTOR = 0.55    # darken footage (measured: 24% target brightness)
 SATURATION_FACTOR = 0.45    # desaturate for moody look (measured: 28% target)
 CONTRAST_FACTOR = 1.20      # stronger contrast (measured from videos)
 
-# --- Audio Settings ---
+# --- Audio Settings (legacy — new code uses dB values from profiles) ---
 VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant, crystal clear)
 MUSIC_VOLUME = 0.32         # 32% volume - intense motivational feel, voice still dominant
                             # voice is ~3x louder so it stays crystal clear
