@@ -25,6 +25,10 @@ STORYBLOCKS_API_SECRET = os.getenv("STORYBLOCKS_API_SECRET", "").strip()
 # Epidemic Sound: premium music (future slot)
 EPIDEMIC_SOUND_API_KEY = os.getenv("EPIDEMIC_SOUND_API_KEY", "").strip()
 
+# Vercel Blob: cloud storage for generated videos, thumbnails, and queue
+# Set this to enable cloud upload after video generation
+BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
+
 # --- Video Format System ---
 # Each format has its own resolution, bitrate, caption style, and search orientation
 class VideoFormat(Enum):

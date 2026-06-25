@@ -10,6 +10,9 @@ from captions import create_caption_clips
 from video_assembler import assemble_video
 from brand_reference import validate_references, VIDEO_SPECS
 from music import select_music
+from thumbnail import generate_thumbnail
+from metadata_generator import generate_metadata
+from blob_storage import upload_pipeline_output
 
 # ============================================================
 # LUMINOUS WILL - AUTOMATED VIDEO PIPELINE
@@ -92,14 +95,14 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
     print("=" * 60)
 
     # --- STEP 1: VALIDATE ---
-    print("\n[STEP 1/6] Validating setup...")
+    print("\n[STEP 1/9] Validating setup...")
     if not validate_setup():
         return None
 
     validate_references()
 
     # --- STEP 2: GENERATE SCRIPT ---
-    print("\n[STEP 2/6] Generating script...")
+    print("\n[STEP 2/9] Generating script...")
     script_segments, topic = generate_script(topic, video_format=video_format)
     full_script = get_script_text(script_segments)
     print(f"[SCRIPT] Topic: {topic}")
@@ -113,14 +116,14 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
     os.makedirs(video_temp, exist_ok=True)
 
     # --- STEP 3: GENERATE VOICEOVER ---
-    print("\n[STEP 3/6] Generating voiceover...")
+    print("\n[STEP 3/9] Generating voiceover...")
     voiceover_path = os.path.join(video_temp, "voiceover.mp3")
     word_timestamps = generate_voiceover(full_script, voiceover_path, profile=profile)
     audio_duration = get_audio_duration(voiceover_path)
     print(f"[VOICEOVER] Duration: {audio_duration:.1f}s")
 
     # --- STEP 4: DOWNLOAD STOCK FOOTAGE ---
-    print("\n[STEP 4/6] Downloading stock footage...")
+    print("\n[STEP 4/9] Downloading stock footage...")
     clips_dir = os.path.join(video_temp, "clips")
     clip_paths = search_and_download_videos(script_segments, clips_dir, profile=profile)
 
@@ -129,13 +132,13 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
         return None
 
     # --- STEP 5: BUILD CAPTIONS ---
-    print("\n[STEP 5/6] Building word-synced captions...")
+    print("\n[STEP 5/9] Building word-synced captions...")
     caption_events = create_caption_clips(
         word_timestamps, script_segments, audio_duration
     )
 
     # --- STEP 6: ASSEMBLE FINAL VIDEO ---
-    print("\n[STEP 6/6] Assembling final video...")
+    print("\n[STEP 6/9] Assembling final video...")
     output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}.mp4")
     # --- Mood-based music selection (matches track to script's dominant mood) ---
     music_path = select_music(script_segments)
@@ -153,6 +156,31 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
         video_format=video_format,
     )
 
+    # --- STEP 7: GENERATE THUMBNAIL ---
+    print("\n[STEP 7/9] Generating thumbnail...")
+    thumbnail_path = output_path.replace(".mp4", "_thumb.jpg")
+    generate_thumbnail(output_path, topic, thumbnail_path)
+
+    # --- STEP 8: GENERATE METADATA ---
+    print("\n[STEP 8/9] Generating social media captions...")
+    # extract_chapters needs caption_events for timing — only useful for long format
+    from script_generator import extract_chapters
+    chapters = extract_chapters(script_segments, caption_events) if video_format == VideoFormat.HORIZONTAL_LONG else None
+    metadata = generate_metadata(topic, script_segments, video_format.value, chapters)
+
+    # --- STEP 9: UPLOAD TO CLOUD + ADD TO QUEUE ---
+    # Only runs if BLOB_READ_WRITE_TOKEN is configured
+    # Otherwise the video stays local — still fully functional
+    queue_entry = upload_pipeline_output(
+        topic=topic,
+        video_format=video_format.value,
+        output_path=output_path,
+        thumbnail_path=thumbnail_path,
+        metadata=metadata,
+        script_text=full_script,
+        duration=audio_duration,
+    )
+
     # --- DONE ---
     elapsed = time.time() - start_time
     print("\n" + "=" * 60)
@@ -160,6 +188,9 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
     print(f"  Format: {video_format.value}")
     print(f"  Topic: {topic}")
     print(f"  Output: {output_path}")
+    if queue_entry:
+        print(f"  Queue ID: {queue_entry['id']}")
+        print(f"  Status: pending_review (check dashboard)")
     print(f"  Time: {elapsed:.0f} seconds")
     print("=" * 60 + "\n")
 
