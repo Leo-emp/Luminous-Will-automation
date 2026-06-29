@@ -216,8 +216,8 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Luminous Will Video Pipeline")
     parser.add_argument("topic", nargs="?", default=None, help="Video topic")
-    parser.add_argument("--format", choices=["short", "long"], default="short",
-                        help="Video format: short (9:16, 60-90s) or long (16:9, 8-12min)")
+    parser.add_argument("--format", choices=["short", "long", "reel"], default="short",
+                        help="Video format: short (9:16, 60-90s), long (16:9, 8-12min), or reel (quote reels, 10-20s)")
     # --- 4K quality flag (Task 7) ---
     # Default is 1080p; passing --quality 4k activates premium resolution overrides.
     # 4K roughly 4x the pixel count (2160x3840 vertical, 3840x2160 horizontal),
@@ -229,6 +229,10 @@ if __name__ == "__main__":
 
     if args.list:
         list_topics()
+    elif args.format == "reel":
+        # --- Quote reel pipeline (separate from main voiceover pipeline) ---
+        from quote_reel import run_quote_reel
+        run_quote_reel(topic=args.topic)
     else:
         from config import VideoFormat
         fmt = VideoFormat.HORIZONTAL_LONG if args.format == "long" else VideoFormat.VERTICAL_SHORT

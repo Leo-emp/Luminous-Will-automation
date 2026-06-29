@@ -34,6 +34,7 @@ BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 class VideoFormat(Enum):
     VERTICAL_SHORT = "short"    # 9:16, 60-90s
     HORIZONTAL_LONG = "long"    # 16:9, 8-12 min
+    QUOTE_REEL = "reel"         # 9:16, 10-20s, text on image + beats, no voiceover
 
 # --- Format Profiles ---
 # Each profile contains ALL format-specific settings

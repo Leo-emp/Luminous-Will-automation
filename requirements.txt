@@ -17,6 +17,7 @@ requests                # API calls to ElevenLabs and Pexels
 
 # --- Audio processing ---
 pydub>=0.25.0           # voiceover normalization for consistent phone-optimized volume
+librosa>=0.11.0         # beat detection for quote reel zoom sync
 
 # --- Environment variables ---
 python-dotenv           # loads API keys from .env file
