@@ -15,6 +15,9 @@ numpy                   # array operations for color grading
 elevenlabs>=1.0.0       # voiceover generation with word timestamps
 requests                # API calls to ElevenLabs and Pexels
 
+# --- Audio processing ---
+pydub>=0.25.0           # voiceover normalization for consistent phone-optimized volume
+
 # --- Environment variables ---
 python-dotenv           # loads API keys from .env file
 

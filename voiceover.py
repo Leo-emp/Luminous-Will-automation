@@ -218,6 +218,25 @@ def _trim_long_pauses(audio_path, word_timestamps, threshold=1.5, target=0.8):
     return trimmed_path, new_timestamps, trims
 
 
+def _normalize_audio(audio_path, target_dbfs=-3.0):
+    """
+    # Normalizes audio so the loudest peak hits target_dbfs.
+    # Guarantees consistent voice volume regardless of ElevenLabs output.
+    # Phone speakers need loud, consistent voice — this ensures it.
+    """
+    from pydub import AudioSegment
+
+    audio = AudioSegment.from_file(audio_path)
+    change_db = target_dbfs - audio.max_dBFS
+    if abs(change_db) < 0.1:
+        print(f"[VOICEOVER] Already at target level ({audio.max_dBFS:.1f}dBFS)")
+        return audio_path
+    normalized = audio + change_db
+    normalized.export(audio_path, format="mp3")
+    print(f"[VOICEOVER] Normalized: {audio.max_dBFS:.1f}dBFS → {target_dbfs:.1f}dBFS ({change_db:+.1f}dB)")
+    return audio_path
+
+
 def generate_voiceover(script_text, output_path, profile=None):
     """
     # Generates voiceover audio from script text using ElevenLabs
@@ -295,6 +314,12 @@ def generate_voiceover(script_text, output_path, profile=None):
             print(f"[VOICEOVER] Validation failed ({reason}), retrying once...")
         else:
             print(f"[VOICEOVER] WARNING: Audio validation failed ({reason}), using best attempt")
+
+    # --- Post-process: normalize voiceover to -3dB peak ---
+    # ElevenLabs outputs inconsistent volumes — some clips are quiet.
+    # Normalization boosts the entire clip so the loudest peak hits -3dB.
+    # This guarantees every video has the same voice loudness, no manual testing.
+    output_path = _normalize_audio(output_path, target_dbfs=-3.0)
 
     # --- Post-process: trim long pauses to tighten pacing ---
     output_path, word_timestamps, trims = _trim_long_pauses(

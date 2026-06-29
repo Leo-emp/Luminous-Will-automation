@@ -56,8 +56,8 @@ FORMAT_PROFILES = {
         "brightness_factor": 0.55,
         "saturation_factor": 0.45,
         # --- Audio mixing (dB-based) ---
-        "voiceover_boost_db": 1.5,           # +1.5 dB boost for voice clarity
-        "music_level_db": -9,                # -9 dB constant, no ducking
+        "voiceover_boost_db": 3.0,           # +3 dB boost — phone-optimized, voice cuts through
+        "music_level_db": -11,               # -11 dB — audible but never overpowers voice on phone
         # --- Ken Burns ---
         "ken_burns_enabled": True,           # global toggle for motion effects
         # --- Transitions ---
