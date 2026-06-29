@@ -576,23 +576,64 @@ def detect_beats(audio_path):
     return beat_times.tolist()
 
 
-def assemble_quote_reel(quote_images, audio_path, output_path, duration=None):
+def _assign_zoom_types(bg_types):
     """
-    # Assembles quote images + audio into a beat-synced video
-    # Each image gets a zoom effect that pulses on beat drops
+    # Assigns a zoom effect to each slide based on its background type
+    # Returns list of zoom type strings
+    #
+    # Rules (matched from viral quote reel patterns):
+    #   - plain backgrounds: mostly "static" (clean, no distraction)
+    #   - epic backgrounds: "slow_zoom" or "punch_zoom" (show off the art)
+    #   - urban backgrounds: "slow_zoom" or "punch_zoom" (add energy)
+    #   - At least 1 slide must have punch_zoom for impact
+    #   - At least 1 slide must be static for contrast
+    """
+    zoom_map = {
+        "plain": ["static", "static", "slow_zoom"],
+        "urban": ["slow_zoom", "punch_zoom", "slow_zoom"],
+        "epic": ["slow_zoom", "punch_zoom", "slow_zoom", "punch_zoom"],
+    }
+
+    zooms = []
+    for bg_type in bg_types:
+        pool = zoom_map.get(bg_type, ["static"])
+        zooms.append(random.choice(pool))
+
+    # --- Guarantee at least 1 punch_zoom and 1 static ---
+    if "punch_zoom" not in zooms:
+        # --- Put punch on first non-plain slide ---
+        for i, bg in enumerate(bg_types):
+            if bg != "plain":
+                zooms[i] = "punch_zoom"
+                break
+    if "static" not in zooms and len(zooms) > 2:
+        zooms[0] = "static"
+
+    return zooms
+
+
+def assemble_quote_reel(quote_images, audio_path, output_path,
+                        duration=None, bg_types=None):
+    """
+    # Assembles quote images + audio into a video with 3 zoom effects:
+    #
+    #   static     — no zoom, clean and still (plain backgrounds)
+    #   slow_zoom  — gentle 1.0→1.12 zoom over the slide duration
+    #   punch_zoom — fast 1.0→1.15 snap zoom on first beat, holds
     #
     # Args:
     #   quote_images: list of rendered quote image paths
     #   audio_path: path to the beat/music audio file
     #   output_path: where to save the final .mp4
     #   duration: target duration in seconds (defaults to audio length)
+    #   bg_types: list of background types per slide (for zoom assignment)
     """
     from moviepy import (
         ImageClip, AudioFileClip, CompositeVideoClip,
         concatenate_videoclips
     )
 
-    print("[QUOTE_REEL] Assembling video with beat-synced zoom...")
+    print("[QUOTE_REEL] Assembling video with zoom effects...")
 
     # --- Load audio ---
     audio = AudioFileClip(audio_path)
@@ -600,63 +641,90 @@ def assemble_quote_reel(quote_images, audio_path, output_path, duration=None):
         audio = audio.subclipped(0, min(duration, audio.duration))
     total_duration = audio.duration
 
-    # --- Detect beats for zoom sync ---
+    # --- Detect beats for punch zoom sync ---
     beat_times = detect_beats(audio_path)
+
+    # --- Assign zoom type per slide ---
+    if not bg_types:
+        bg_types = ["urban"] * len(quote_images)
+    zoom_types = _assign_zoom_types(bg_types)
 
     # --- Calculate time per image ---
     num_images = len(quote_images)
     time_per_image = total_duration / num_images
+
+    print(f"[QUOTE_REEL] {num_images} slides, {time_per_image:.1f}s each, {total_duration:.1f}s total")
+    for i, (zt, bt) in enumerate(zip(zoom_types, bg_types)):
+        print(f"  Slide {i+1}: {bt} bg, {zt} zoom")
 
     clips = []
     for i, img_path in enumerate(quote_images):
         start_time = i * time_per_image
         end_time = min((i + 1) * time_per_image, total_duration)
         clip_duration = end_time - start_time
+        zoom_type = zoom_types[i]
 
-        # --- Find beats that fall within this image's time window ---
-        clip_beats = [b - start_time for b in beat_times
-                      if start_time <= b < end_time]
+        # --- Find the first beat in this slide's window (for punch zoom) ---
+        first_beat = None
+        for b in beat_times:
+            if start_time <= b < end_time:
+                first_beat = b - start_time
+                break
 
-        # --- Create zoom effect function for this clip ---
-        # Base zoom starts at 1.0, pulses to 1.08 on each beat, decays back
-        def make_zoom_func(beats, dur):
+        # --- Build zoom function based on type ---
+        def make_zoom_func(ztype, dur, beat_t):
             def zoom_func(t):
-                zoom = 1.0
-                for bt in beats:
-                    # --- Time since this beat ---
-                    dt = t - bt
-                    if 0 <= dt < 0.4:
-                        # --- Quick zoom in on beat, smooth decay ---
-                        pulse = 0.08 * max(0, 1 - dt / 0.4)
-                        zoom = max(zoom, 1.0 + pulse)
-                # --- Slow steady zoom over entire clip duration ---
-                base_zoom = 1.0 + 0.05 * (t / dur)
-                return max(zoom, base_zoom)
+                if ztype == "static":
+                    return 1.0
+
+                elif ztype == "slow_zoom":
+                    # --- Smooth zoom from 1.0 to 1.12 over full duration ---
+                    return 1.0 + 0.12 * (t / dur)
+
+                elif ztype == "punch_zoom":
+                    # --- Snap zoom on first beat, then hold ---
+                    if beat_t is not None:
+                        dt = t - beat_t
+                        if dt < 0:
+                            return 1.0
+                        elif dt < 0.15:
+                            # --- Fast snap in (0 to 0.15 over 0.15s) ---
+                            return 1.0 + 0.15 * (dt / 0.15)
+                        else:
+                            return 1.15
+                    else:
+                        # --- No beat found, do snap at start ---
+                        if t < 0.15:
+                            return 1.0 + 0.15 * (t / 0.15)
+                        return 1.15
+
+                return 1.0
             return zoom_func
 
-        zoom_fn = make_zoom_func(clip_beats, clip_duration)
+        zoom_fn = make_zoom_func(zoom_type, clip_duration, first_beat)
 
-        # --- Build the zooming image clip ---
+        # --- Build the frame function ---
         img = Image.open(img_path)
         img_w, img_h = img.size
 
-        def make_frame_func(path, w, h, zfn):
+        def make_frame_func(path, w, h, zfn, is_static):
             img_array = np.array(Image.open(path))
             def frame_func(t):
                 z = zfn(t)
-                # --- Calculate crop region for zoom ---
+                if is_static or z <= 1.001:
+                    return img_array
                 crop_w = int(w / z)
                 crop_h = int(h / z)
                 x1 = (w - crop_w) // 2
                 y1 = (h - crop_h) // 2
                 cropped = img_array[y1:y1+crop_h, x1:x1+crop_w]
-                # --- Resize back to original dimensions ---
                 from PIL import Image as PILImage
                 frame = PILImage.fromarray(cropped).resize((w, h), PILImage.LANCZOS)
                 return np.array(frame)
             return frame_func
 
-        frame_fn = make_frame_func(img_path, img_w, img_h, zoom_fn)
+        frame_fn = make_frame_func(img_path, img_w, img_h, zoom_fn,
+                                    zoom_type == "static")
 
         from moviepy import VideoClip
         clip = VideoClip(frame_fn, duration=clip_duration)
@@ -767,7 +835,10 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     timestamp = _time.strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(config.OUTPUT_DIR, f"reel_{safe_topic}_{timestamp}.mp4")
 
-    assemble_quote_reel(rendered_images, beat_path, output_path, duration=duration)
+    # --- Extract bg_types for zoom assignment ---
+    slide_bg_types = [bg_data[i][1] for i in range(len(rendered_images))]
+    assemble_quote_reel(rendered_images, beat_path, output_path,
+                        duration=duration, bg_types=slide_bg_types)
 
     # --- Upload to cloud if configured ---
     from blob_storage import upload_pipeline_output
