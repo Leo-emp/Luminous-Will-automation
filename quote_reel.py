@@ -247,8 +247,8 @@ def _create_plain_background(index):
     img = Image.new("RGB", (1080, 1920), color_set["bg"])
 
     # --- Add subtle noise/grain for texture (not flat digital) ---
-    img_array = np.array(img, dtype=np.float32)
-    noise = np.random.normal(0, 3, img_array.shape)
+    img_array = np.array(img, dtype=np.int16)
+    noise = np.random.randint(-3, 4, img_array.shape, dtype=np.int16)
     img_array = np.clip(img_array + noise, 0, 255)
     img = Image.fromarray(img_array.astype(np.uint8))
 
@@ -298,56 +298,60 @@ def _download_pexels_image(query, index):
     return None
 
 
+def _fetch_bg(bg_type, index):
+    """
+    # Fetches a single background of the given type
+    # Returns (image_path, bg_type, text_color_override_or_None)
+    """
+    if bg_type == "plain":
+        img_path, text_color = _create_plain_background(index)
+        print(f"[QUOTE_REEL] Background #{index+1}: plain solid")
+        return (img_path, "plain", text_color)
+
+    elif bg_type == "epic":
+        queries = random.sample(BG_EPIC_QUERIES, min(3, len(BG_EPIC_QUERIES)))
+        for query in queries:
+            img_path = _download_pexels_image(query, index)
+            if img_path:
+                return (img_path, "epic", None)
+        # --- Fallback to plain if epic fails ---
+        img_path, text_color = _create_plain_background(index)
+        return (img_path, "plain", text_color)
+
+    else:  # urban
+        queries = random.sample(BG_URBAN_QUERIES, min(3, len(BG_URBAN_QUERIES)))
+        for query in queries:
+            img_path = _download_pexels_image(query, index)
+            if img_path:
+                return (img_path, "urban", None)
+        img_path, text_color = _create_plain_background(index)
+        return (img_path, "plain", text_color)
+
+
 def search_background_images(count=5):
     """
-    # Gets background images from 3 categories (matched to Apollo Method):
-    #   1. Plain solid colors (generated locally, no API call)
-    #   2. Urban/textured real-world photos (Pexels)
-    #   3. Epic mythological/warrior imagery (Pexels)
+    # Gets background images guaranteeing ALL 3 types appear in every video.
+    # Minimum 1 plain + 1 urban + 1 epic, remaining slots filled randomly.
+    # Order is shuffled so types alternate for maximum visual variety.
     #
     # Returns list of (image_path, bg_type, text_color_override_or_None)
     """
+    # --- Guarantee at least 1 of each type ---
+    required = ["plain", "urban", "epic"]
+    remaining = count - len(required)
+
+    # --- Fill remaining slots with weighted random picks ---
+    extra_types = []
+    for _ in range(remaining):
+        extra_types.append(_pick_bg_type())
+
+    all_types = required + extra_types
+    random.shuffle(all_types)
+
+    # --- Fetch each background ---
     results = []
-
-    for i in range(count):
-        bg_type = _pick_bg_type()
-
-        if bg_type == "plain":
-            img_path, text_color = _create_plain_background(i)
-            results.append((img_path, "plain", text_color))
-            print(f"[QUOTE_REEL] Background #{i+1}: plain solid")
-
-        elif bg_type == "epic":
-            queries = random.sample(BG_EPIC_QUERIES, min(3, len(BG_EPIC_QUERIES)))
-            found = False
-            for query in queries:
-                img_path = _download_pexels_image(query, i)
-                if img_path:
-                    results.append((img_path, "epic", None))
-                    found = True
-                    break
-            if not found:
-                # --- Fallback to urban if epic query fails ---
-                query = random.choice(BG_URBAN_QUERIES)
-                img_path = _download_pexels_image(query, i)
-                if img_path:
-                    results.append((img_path, "urban", None))
-                else:
-                    img_path, text_color = _create_plain_background(i)
-                    results.append((img_path, "plain", text_color))
-
-        else:  # urban
-            queries = random.sample(BG_URBAN_QUERIES, min(3, len(BG_URBAN_QUERIES)))
-            found = False
-            for query in queries:
-                img_path = _download_pexels_image(query, i)
-                if img_path:
-                    results.append((img_path, "urban", None))
-                    found = True
-                    break
-            if not found:
-                img_path, text_color = _create_plain_background(i)
-                results.append((img_path, "plain", text_color))
+    for i, bg_type in enumerate(all_types):
+        results.append(_fetch_bg(bg_type, i))
 
     return results
 
