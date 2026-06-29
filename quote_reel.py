@@ -44,8 +44,10 @@ FONT_FILES = {
     "montserrat": os.path.join(FONTS_DIR, "Montserrat-Bold.ttf"),
 }
 
-# --- Pexels search queries for dark/urban/textured backgrounds ---
-BACKGROUND_QUERIES = [
+# --- Background categories (matched from @theapollomethod's 3 visual styles) ---
+
+# Category 1: Urban/textured real-world photos
+BG_URBAN_QUERIES = [
     "dark concrete wall", "dark texture background", "black wall",
     "dark urban street", "moody architecture", "dark gym",
     "rain dark city", "dark alley", "concrete floor dark",
@@ -55,80 +57,123 @@ BACKGROUND_QUERIES = [
     "dark staircase", "dark empty room",
 ]
 
+# Category 2: Epic/mythological/warrior imagery (Sisyphus, statues, lions, etc.)
+BG_EPIC_QUERIES = [
+    "greek statue black and white", "ancient warrior statue",
+    "lion portrait black and white", "eagle portrait dark",
+    "man pushing boulder", "atlas statue", "roman sculpture dark",
+    "mountain peak dramatic", "stormy ocean waves dark",
+    "boxer silhouette", "spartan helmet", "knight armor dark",
+    "wolf portrait dark", "lone man mountain top",
+    "chess king piece dark", "dark throne", "sword dark background",
+    "muscular man silhouette", "statue of david", "greek god statue",
+    "samurai dark", "gladiator", "phoenix dark art",
+    "bull portrait dark", "dark horse running",
+]
+
+# Category 3: Plain/solid color backgrounds (generated programmatically)
+BG_PLAIN_COLORS = [
+    {"bg": (245, 240, 232), "text": (25, 25, 25)},       # off-white/cream
+    {"bg": (235, 230, 220), "text": (30, 30, 30)},        # warm beige
+    {"bg": (224, 224, 224), "text": (20, 20, 20)},         # light grey
+    {"bg": (200, 195, 185), "text": (25, 25, 25)},         # warm grey
+    {"bg": (30, 30, 30), "text": (255, 255, 255)},         # dark charcoal
+    {"bg": (15, 15, 15), "text": (255, 255, 255)},         # near black
+    {"bg": (245, 245, 245), "text": (15, 15, 15)},         # clean white
+    {"bg": (210, 200, 180), "text": (35, 30, 25)},         # parchment
+]
+
+# --- Background type distribution (controls variety like Apollo Method) ---
+# Apollo uses roughly: 35% plain, 35% urban, 30% epic
+BG_TYPE_WEIGHTS = {"plain": 35, "urban": 35, "epic": 30}
+
+# --- Safe zone margins (percentage of image dimensions) ---
+# Text never enters these zones — matched from Apollo Method's generous margins
+MARGIN_X_RATIO = 0.12   # 12% from left/right edges (130px on 1080w)
+MARGIN_Y_RATIO = 0.15   # 15% from top/bottom edges (288px on 1920h)
+
 # --- Quote style definitions ---
-# Each style controls: font, size, color, alignment, effects
+# Matched to @theapollomethod's actual styles from their viral posts
 QUOTE_STYLES = {
     "highlight": {
-        # Yellow marker highlight behind text — Apollo Method signature
+        # Yellow marker highlight behind text — Apollo Method signature style
+        # Ref: "If I play, I play to win.", "Pain builds you. Comfort weakens you."
         "font_key": "montserrat",
-        "font_size_ratio": 0.065,       # relative to image height
-        "text_color": (0, 0, 0),         # black text on highlight
-        "highlight_color": (255, 234, 0), # bright yellow marker
-        "highlight_padding": 12,
+        "base_font_size": 80,
+        "text_color": (0, 0, 0),
+        "highlight_color": (255, 234, 0),
+        "highlight_padding_x": 18,
+        "highlight_padding_y": 10,
         "alignment": "left",
         "uppercase": False,
-        "max_chars_per_line": 22,
-        "line_spacing_ratio": 1.6,
+        "line_spacing_ratio": 1.8,
+        "split_on_sentences": False,
+        "bg_darken": 0.55,
     },
     "minimalist": {
-        # Clean simple text centered on background
+        # Clean simple centered text — "No risk, no story.", "It's you vs you."
         "font_key": "montserrat",
-        "font_size_ratio": 0.055,
+        "base_font_size": 85,
         "text_color": (255, 255, 255),
         "highlight_color": None,
         "alignment": "center",
         "uppercase": False,
-        "max_chars_per_line": 24,
-        "line_spacing_ratio": 1.5,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": False,
         "shadow": True,
+        "bg_darken": 0.50,
     },
     "bold_caps": {
-        # Thick heavy ALL CAPS — in your face
+        # Thick heavy ALL CAPS — "WINNING ISN'T FOR EVERYONE.", "MAKE IT HAPPEN."
         "font_key": "anton",
-        "font_size_ratio": 0.085,
-        "text_color": (255, 255, 255),
-        "highlight_color": None,
-        "alignment": "center",
-        "uppercase": True,
-        "max_chars_per_line": 16,
-        "line_spacing_ratio": 1.3,
-        "shadow": True,
-    },
-    "handwritten": {
-        # Casual brush/marker feel
-        "font_key": "marker",
-        "font_size_ratio": 0.065,
-        "text_color": (255, 255, 255),
-        "highlight_color": None,
-        "alignment": "center",
-        "uppercase": False,
-        "max_chars_per_line": 20,
-        "line_spacing_ratio": 1.5,
-        "shadow": True,
-    },
-    "stacked": {
-        # Multiple short lines stacked — "Work hard. Dress good. Eat well."
-        "font_key": "bebas",
-        "font_size_ratio": 0.055,
+        "base_font_size": 110,
         "text_color": (255, 255, 255),
         "highlight_color": None,
         "alignment": "left",
         "uppercase": True,
-        "max_chars_per_line": 28,
-        "line_spacing_ratio": 1.6,
+        "line_spacing_ratio": 1.2,
+        "split_on_sentences": False,
         "shadow": True,
+        "bg_darken": 0.50,
     },
-    "editorial": {
-        # Serif newspaper-style — sophisticated
-        "font_key": "playfair",
-        "font_size_ratio": 0.06,
+    "handwritten": {
+        # Casual brush/marker — "Dream big, work hard, stay humble."
+        "font_key": "marker",
+        "base_font_size": 85,
         "text_color": (255, 255, 255),
         "highlight_color": None,
         "alignment": "center",
         "uppercase": False,
-        "max_chars_per_line": 22,
-        "line_spacing_ratio": 1.5,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": True,
         "shadow": True,
+        "bg_darken": 0.50,
+    },
+    "stacked": {
+        # Each sentence on its own line — "Work hard. Dress good. Eat well."
+        "font_key": "oswald",
+        "base_font_size": 72,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": True,
+        "line_spacing_ratio": 1.7,
+        "split_on_sentences": True,
+        "shadow": True,
+        "bg_darken": 0.50,
+    },
+    "editorial": {
+        # Serif newspaper-style — "What if it all works out?"
+        "font_key": "playfair",
+        "base_font_size": 90,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": False,
+        "line_spacing_ratio": 1.5,
+        "split_on_sentences": False,
+        "shadow": True,
+        "bg_darken": 0.55,
     },
 }
 
@@ -183,62 +228,186 @@ Generate {count} quotes now:"""
     return quotes[:count], topic
 
 
-def search_background_images(count=5):
+def _pick_bg_type():
     """
-    # Downloads dark/urban/textured background images from Pexels
-    # Returns list of local file paths
+    # Randomly picks a background type based on weighted distribution
+    # Returns "plain", "urban", or "epic"
+    """
+    types = list(BG_TYPE_WEIGHTS.keys())
+    weights = list(BG_TYPE_WEIGHTS.values())
+    return random.choices(types, weights=weights, k=1)[0]
+
+
+def _create_plain_background(index):
+    """
+    # Creates a solid color background image (no Pexels needed)
+    # Returns (image_path, text_color_override)
+    """
+    color_set = random.choice(BG_PLAIN_COLORS)
+    img = Image.new("RGB", (1080, 1920), color_set["bg"])
+
+    # --- Add subtle noise/grain for texture (not flat digital) ---
+    img_array = np.array(img, dtype=np.float32)
+    noise = np.random.normal(0, 3, img_array.shape)
+    img_array = np.clip(img_array + noise, 0, 255)
+    img = Image.fromarray(img_array.astype(np.uint8))
+
+    img_path = os.path.join(config.TEMP_DIR, f"quote_bg_plain_{index}.png")
+    img.save(img_path, quality=95)
+    return img_path, color_set["text"]
+
+
+def _download_pexels_image(query, index):
+    """
+    # Downloads a single image from Pexels matching the query
+    # Returns image path or None
     """
     import requests
 
     headers = {"Authorization": config.PEXELS_API_KEY}
-    downloaded = []
-    # --- Shuffle queries and try until we have enough ---
-    queries = random.sample(BACKGROUND_QUERIES, min(count * 2, len(BACKGROUND_QUERIES)))
+    url = "https://api.pexels.com/v1/search"
+    params = {
+        "query": query,
+        "orientation": "portrait",
+        "size": "large",
+        "per_page": 10,
+    }
 
-    for query in queries:
-        if len(downloaded) >= count:
-            break
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=15)
+        if resp.status_code != 200:
+            return None
 
-        url = "https://api.pexels.com/v1/search"
-        params = {
-            "query": query,
-            "orientation": "portrait",
-            "size": "large",
-            "per_page": 5,
-        }
+        photos = resp.json().get("photos", [])
+        if not photos:
+            return None
 
-        try:
-            resp = requests.get(url, headers=headers, params=params, timeout=15)
-            if resp.status_code != 200:
-                continue
+        photo = random.choice(photos)
+        img_url = photo["src"]["large2x"]
+        img_path = os.path.join(config.TEMP_DIR, f"quote_bg_{index}.jpg")
 
-            photos = resp.json().get("photos", [])
-            if not photos:
-                continue
+        img_resp = requests.get(img_url, timeout=30)
+        if img_resp.status_code == 200:
+            with open(img_path, "wb") as f:
+                f.write(img_resp.content)
+            print(f"[QUOTE_REEL] Background: {query} -> {photo['photographer']}")
+            return img_path
+    except Exception as e:
+        print(f"[QUOTE_REEL] Pexels error for '{query}': {e}")
 
-            # --- Pick a random photo from results ---
-            photo = random.choice(photos)
-            img_url = photo["src"]["large2x"]
-            img_path = os.path.join(config.TEMP_DIR, f"quote_bg_{len(downloaded)}.jpg")
-
-            img_resp = requests.get(img_url, timeout=30)
-            if img_resp.status_code == 200:
-                with open(img_path, "wb") as f:
-                    f.write(img_resp.content)
-                downloaded.append(img_path)
-                print(f"[QUOTE_REEL] Background: {query} -> {photo['photographer']}")
-
-        except Exception as e:
-            print(f"[QUOTE_REEL] Pexels error for '{query}': {e}")
-            continue
-
-    return downloaded
+    return None
 
 
-def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=None):
+def search_background_images(count=5):
+    """
+    # Gets background images from 3 categories (matched to Apollo Method):
+    #   1. Plain solid colors (generated locally, no API call)
+    #   2. Urban/textured real-world photos (Pexels)
+    #   3. Epic mythological/warrior imagery (Pexels)
+    #
+    # Returns list of (image_path, bg_type, text_color_override_or_None)
+    """
+    results = []
+
+    for i in range(count):
+        bg_type = _pick_bg_type()
+
+        if bg_type == "plain":
+            img_path, text_color = _create_plain_background(i)
+            results.append((img_path, "plain", text_color))
+            print(f"[QUOTE_REEL] Background #{i+1}: plain solid")
+
+        elif bg_type == "epic":
+            queries = random.sample(BG_EPIC_QUERIES, min(3, len(BG_EPIC_QUERIES)))
+            found = False
+            for query in queries:
+                img_path = _download_pexels_image(query, i)
+                if img_path:
+                    results.append((img_path, "epic", None))
+                    found = True
+                    break
+            if not found:
+                # --- Fallback to urban if epic query fails ---
+                query = random.choice(BG_URBAN_QUERIES)
+                img_path = _download_pexels_image(query, i)
+                if img_path:
+                    results.append((img_path, "urban", None))
+                else:
+                    img_path, text_color = _create_plain_background(i)
+                    results.append((img_path, "plain", text_color))
+
+        else:  # urban
+            queries = random.sample(BG_URBAN_QUERIES, min(3, len(BG_URBAN_QUERIES)))
+            found = False
+            for query in queries:
+                img_path = _download_pexels_image(query, i)
+                if img_path:
+                    results.append((img_path, "urban", None))
+                    found = True
+                    break
+            if not found:
+                img_path, text_color = _create_plain_background(i)
+                results.append((img_path, "plain", text_color))
+
+    return results
+
+
+def _split_quote_lines(text, style, font, max_text_width):
+    """
+    # Splits quote text into lines that fit within max_text_width
+    # Uses sentence splitting for stacked style, word-wrap for others
+    # Dynamically reduces font size if text still doesn't fit
+    """
+    if style.get("split_on_sentences"):
+        # --- Split on sentence boundaries (periods, commas for stacked/handwritten) ---
+        import re
+        raw_parts = re.split(r'(?<=[.!?])\s+', text)
+        lines = [p.strip() for p in raw_parts if p.strip()]
+        if len(lines) <= 1:
+            lines = [s.strip() for s in text.split(",") if s.strip()]
+    else:
+        lines = textwrap.wrap(text, width=100)
+
+    # --- Verify each line fits within max_text_width, re-wrap if not ---
+    final_lines = []
+    dummy_img = Image.new("RGB", (10, 10))
+    dummy_draw = ImageDraw.Draw(dummy_img)
+    for line in lines:
+        bbox = dummy_draw.textbbox((0, 0), line, font=font)
+        line_w = bbox[2] - bbox[0]
+        if line_w <= max_text_width:
+            final_lines.append(line)
+        else:
+            # --- Line too wide, word-wrap it to fit ---
+            words = line.split()
+            current = ""
+            for word in words:
+                test = f"{current} {word}".strip()
+                bbox = dummy_draw.textbbox((0, 0), test, font=font)
+                if bbox[2] - bbox[0] <= max_text_width:
+                    current = test
+                else:
+                    if current:
+                        final_lines.append(current)
+                    current = word
+            if current:
+                final_lines.append(current)
+
+    return final_lines
+
+
+def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=None,
+                       bg_type="urban", text_color_override=None):
     """
     # Renders a quote onto a background image using the specified style
     # Returns the path to the rendered image (1080x1920)
+    #
+    # Matched to @theapollomethod quality standards:
+    #   - Safe margins (12% x, 15% y) — text never clips edges
+    #   - Dynamic font sizing — short quotes get MASSIVE text
+    #   - Sentence-aware line splitting for stacked styles
+    #   - Background darkened subtly (texture stays visible)
+    #   - Thick yellow highlight bars for highlight style
     """
     # --- Pick random style if not specified ---
     if not style_name:
@@ -248,7 +417,6 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     # --- Load and resize background to 1080x1920 ---
     bg = Image.open(bg_image_path).convert("RGB")
     target_w, target_h = 1080, 1920
-    # --- Crop-to-fill: resize so smallest dimension fits, then center crop ---
     bg_ratio = bg.width / bg.height
     target_ratio = target_w / target_h
     if bg_ratio > target_ratio:
@@ -262,16 +430,47 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     top = (new_h - target_h) // 2
     bg = bg.crop((left, top, left + target_w, top + target_h))
 
-    # --- Darken the background for text readability ---
-    bg_array = np.array(bg, dtype=np.float32)
-    bg_array *= 0.45
-    bg = Image.fromarray(bg_array.astype(np.uint8))
+    # --- Darken background (skip for plain — they're already the right color) ---
+    if bg_type != "plain":
+        darken = style.get("bg_darken", 0.55)
+        # --- Epic images get slightly less darkening to show the artwork ---
+        if bg_type == "epic":
+            darken = min(darken + 0.1, 0.65)
+        bg_array = np.array(bg, dtype=np.float32)
+        bg_array *= darken
+        bg = Image.fromarray(bg_array.astype(np.uint8))
 
     draw = ImageDraw.Draw(bg)
 
+    # --- Override text color for plain backgrounds (dark text on light, white on dark) ---
+    if text_color_override:
+        text_color_active = text_color_override
+        # --- Adjust highlight text color too — black on yellow still works ---
+        if style.get("highlight_color"):
+            text_color_active = (0, 0, 0)
+    else:
+        text_color_active = style["text_color"]
+
+    # --- Calculate safe zone ---
+    margin_x = int(target_w * MARGIN_X_RATIO)
+    margin_y = int(target_h * MARGIN_Y_RATIO)
+    max_text_width = target_w - (margin_x * 2)
+    max_text_height = target_h - (margin_y * 2)
+
+    # --- Dynamic font sizing: fewer words = bigger text ---
+    word_count = len(quote_text.split())
+    base_size = style["base_font_size"]
+    if word_count <= 5:
+        font_size = int(base_size * 1.4)
+    elif word_count <= 8:
+        font_size = int(base_size * 1.15)
+    elif word_count <= 12:
+        font_size = base_size
+    else:
+        font_size = int(base_size * 0.85)
+
     # --- Load font ---
     font_path = FONT_FILES.get(style["font_key"], FONT_FILES["montserrat"])
-    font_size = int(target_h * style["font_size_ratio"])
     try:
         font = ImageFont.truetype(font_path, font_size)
     except Exception:
@@ -279,52 +478,76 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
 
     # --- Prepare text ---
     text = quote_text.upper() if style.get("uppercase") else quote_text
-    max_chars = style["max_chars_per_line"]
-    lines = textwrap.wrap(text, width=max_chars)
 
-    # --- Calculate text block dimensions ---
-    line_heights = []
-    line_widths = []
+    # --- Split into lines that fit within safe zone ---
+    lines = _split_quote_lines(text, style, font, max_text_width)
+
+    # --- Shrink font if text block is too tall for safe zone ---
+    while True:
+        bbox_test = draw.textbbox((0, 0), "Ay", font=font)
+        single_h = bbox_test[3] - bbox_test[1]
+        line_spacing = int(single_h * style["line_spacing_ratio"])
+        total_h = line_spacing * len(lines)
+        if total_h <= max_text_height or font_size <= 40:
+            break
+        font_size -= 4
+        font = ImageFont.truetype(font_path, font_size)
+        lines = _split_quote_lines(text, style, font, max_text_width)
+
+    # --- Measure final line dimensions ---
+    line_metrics = []
     for line in lines:
-        bbox = draw.textbbox((0, 0), line, font=font)
-        line_widths.append(bbox[2] - bbox[0])
-        line_heights.append(bbox[3] - bbox[1])
-
-    line_spacing = int(line_heights[0] * style["line_spacing_ratio"]) if line_heights else font_size
-    total_text_height = line_spacing * len(lines)
-
-    # --- Position text block (vertically centered) ---
-    start_y = (target_h - total_text_height) // 2
-
-    for i, line in enumerate(lines):
         bbox = draw.textbbox((0, 0), line, font=font)
         lw = bbox[2] - bbox[0]
         lh = bbox[3] - bbox[1]
+        line_metrics.append((lw, lh))
 
-        # --- Horizontal position based on alignment ---
+    bbox_ref = draw.textbbox((0, 0), "Ay", font=font)
+    ref_h = bbox_ref[3] - bbox_ref[1]
+    line_spacing = int(ref_h * style["line_spacing_ratio"])
+    total_text_height = line_spacing * len(lines)
+
+    # --- Vertically center the text block ---
+    start_y = (target_h - total_text_height) // 2
+
+    for i, line in enumerate(lines):
+        lw, lh = line_metrics[i]
+        y = start_y + (i * line_spacing)
+
+        # --- Horizontal position (clamped to safe zone) ---
         if style["alignment"] == "center":
             x = (target_w - lw) // 2
         elif style["alignment"] == "left":
-            x = int(target_w * 0.1)
+            x = margin_x
         else:
-            x = target_w - lw - int(target_w * 0.1)
+            x = target_w - lw - margin_x
 
-        y = start_y + (i * line_spacing)
+        # --- Clamp x so text + width stays inside safe zone ---
+        x = max(margin_x, min(x, target_w - margin_x - lw))
 
-        # --- Draw yellow highlight behind text ---
+        # --- Draw yellow highlight bar behind text ---
         if style.get("highlight_color"):
-            pad = style.get("highlight_padding", 10)
-            highlight_rect = [x - pad, y - pad // 2, x + lw + pad, y + lh + pad]
-            draw.rectangle(highlight_rect, fill=style["highlight_color"])
+            pad_x = style.get("highlight_padding_x", 16)
+            pad_y = style.get("highlight_padding_y", 8)
+            rect = [
+                x - pad_x,
+                y - pad_y,
+                x + lw + pad_x,
+                y + lh + pad_y + 4,
+            ]
+            # --- Clamp highlight to image bounds ---
+            rect[0] = max(0, rect[0])
+            rect[2] = min(target_w, rect[2])
+            draw.rectangle(rect, fill=style["highlight_color"])
 
-        # --- Draw text shadow for depth ---
-        if style.get("shadow"):
-            shadow_offset = max(2, font_size // 30)
-            draw.text((x + shadow_offset, y + shadow_offset), line, font=font,
-                      fill=(0, 0, 0, 180))
+        # --- Draw text shadow (skip on plain light backgrounds — looks dirty) ---
+        if style.get("shadow") and bg_type != "plain":
+            shadow_offset = max(3, font_size // 20)
+            for sx in range(1, shadow_offset + 1):
+                draw.text((x + sx, y + sx), line, font=font, fill=(0, 0, 0))
 
         # --- Draw main text ---
-        draw.text((x, y), line, font=font, fill=style["text_color"])
+        draw.text((x, y), line, font=font, fill=text_color_active)
 
     # --- Save ---
     if not output_path:
@@ -491,15 +714,15 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
 
     # --- STEP 2: Download background images ---
     print("\n[STEP 2/5] Downloading background images...")
-    bg_images = search_background_images(count=len(quotes))
+    bg_data = search_background_images(count=len(quotes))
 
-    if not bg_images:
+    if not bg_data:
         print("[ERROR] No background images downloaded")
         return None
 
     # --- Pad if fewer backgrounds than quotes ---
-    while len(bg_images) < len(quotes):
-        bg_images.append(random.choice(bg_images))
+    while len(bg_data) < len(quotes):
+        bg_data.append(random.choice(bg_data))
 
     # --- STEP 3: Render quote images ---
     print("\n[STEP 3/5] Rendering quote images...")
@@ -508,8 +731,12 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     style_names = list(QUOTE_STYLES.keys())
     for i, quote in enumerate(quotes):
         style = style_names[i % len(style_names)]
+        img_path, bg_type, text_color = bg_data[i]
         out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
-        rendered = render_quote_image(quote, bg_images[i], style_name=style, output_path=out_path)
+        rendered = render_quote_image(
+            quote, img_path, style_name=style, output_path=out_path,
+            bg_type=bg_type, text_color_override=text_color,
+        )
         rendered_images.append(rendered)
 
     # --- STEP 4: Select audio beat ---
