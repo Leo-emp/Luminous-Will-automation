@@ -59,6 +59,9 @@ BG_URBAN_QUERIES = [
     "dark luxury interior", "dark modern apartment", "dark aesthetic room",
     "dark coffee shop moody", "dark bookshelf aesthetic", "dark desk setup",
     "dark bathroom luxury", "dark bedroom moody", "dark lounge interior",
+    # --- Graffiti-ready surfaces (brick, concrete, textured walls) ---
+    "brick wall texture", "old brick wall", "concrete wall graffiti",
+    "abandoned wall texture", "urban wall texture", "rough concrete surface",
 ]
 
 # Category 2: Epic/mythological/warrior imagery (Sisyphus, statues, lions, etc.)
@@ -274,7 +277,29 @@ QUOTE_STYLES = {
         "force_plain_bg": True,
         "plain_color": (10, 10, 10),
     },
+    "graffiti": {
+        # Spray paint text on brick/concrete — ref: IMG_5117 "SUCCESS IS THE BEST REVENGE"
+        # Raw urban energy, red or white spray paint on real walls
+        "font_key": "marker",
+        "base_font_size": 100,
+        "text_color": (220, 30, 30),
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": True,
+        "line_spacing_ratio": 1.3,
+        "split_on_sentences": False,
+        "shadow": False,
+        "spray_paint": True,
+        "bg_darken": 0.55,
+    },
 }
+
+# --- Graffiti color variations (randomly picked per render) ---
+GRAFFITI_COLORS = [
+    (220, 30, 30),    # red spray paint
+    (255, 255, 255),  # white spray paint
+    (230, 220, 50),   # yellow spray paint
+]
 
 
 def generate_quotes(topic=None, count=5):
@@ -567,6 +592,10 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     else:
         text_color_active = style["text_color"]
 
+    # --- Randomize graffiti spray paint color ---
+    if style.get("spray_paint"):
+        text_color_active = random.choice(GRAFFITI_COLORS)
+
     # --- Calculate safe zone ---
     margin_x = int(target_w * MARGIN_X_RATIO)
     margin_y = int(target_h * MARGIN_Y_RATIO)
@@ -715,8 +744,52 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
             for sx in range(1, shadow_offset + 1):
                 draw.text((x + sx, y + sx), line, font=font, fill=(0, 0, 0))
 
-        # --- Draw main text ---
-        draw.text((x, y), line, font=font, fill=text_color_active)
+        # --- Draw spray paint effect (realistic graffiti on walls) ---
+        if style.get("spray_paint"):
+            spray_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+            spray_draw = ImageDraw.Draw(spray_layer)
+            # --- Draw main text with rough edges via jittered offsets ---
+            for dx in range(-2, 3):
+                for dy in range(-2, 3):
+                    alpha = 255 if abs(dx) <= 1 and abs(dy) <= 1 else random.randint(100, 200)
+                    spray_draw.text((x + dx, y + dy), line, font=font,
+                                    fill=text_color_active + (alpha,))
+            # --- Wide overspray cloud around text (big radius, low density) ---
+            for cx in range(x - 25, x + lw + 25, 4):
+                for cy in range(y - 20, y + lh + 20, 4):
+                    dist_x = 0 if x <= cx <= x + lw else min(abs(cx - x), abs(cx - x - lw))
+                    dist_y = 0 if y <= cy <= y + lh else min(abs(cy - y), abs(cy - y - lh))
+                    dist = max(dist_x, dist_y)
+                    # --- Closer to text = more dots, farther = fewer ---
+                    spray_prob = 0.25 if dist < 5 else (0.08 if dist < 15 else 0.03)
+                    if random.random() < spray_prob:
+                        dot_x = cx + random.randint(-6, 6)
+                        dot_y = cy + random.randint(-6, 6)
+                        dot_alpha = random.randint(30, 180)
+                        dot_size = random.randint(1, 4)
+                        spray_draw.ellipse(
+                            [dot_x, dot_y, dot_x + dot_size, dot_y + dot_size],
+                            fill=text_color_active + (dot_alpha,))
+            # --- Paint drips below random letters ---
+            if random.random() < 0.6:
+                num_drips = random.randint(1, 3)
+                for _ in range(num_drips):
+                    drip_x = x + random.randint(5, max(6, lw - 5))
+                    drip_y = y + lh + random.randint(0, 5)
+                    drip_len = random.randint(20, 60)
+                    drip_width = random.randint(2, 4)
+                    for dy_drip in range(drip_len):
+                        alpha = max(15, 220 - dy_drip * 4)
+                        drip_x_wobble = drip_x + random.randint(-1, 1)
+                        spray_draw.rectangle(
+                            [drip_x_wobble, drip_y + dy_drip,
+                             drip_x_wobble + drip_width, drip_y + dy_drip + 1],
+                            fill=text_color_active + (alpha,))
+            bg = Image.alpha_composite(bg.convert("RGBA"), spray_layer).convert("RGB")
+            draw = ImageDraw.Draw(bg)
+        else:
+            # --- Draw main text ---
+            draw.text((x, y), line, font=font, fill=text_color_active)
 
     # --- Draw bracket frame around text block if style has brackets ---
     if style.get("brackets"):
@@ -986,44 +1059,117 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
         return None
 
     # --- STEP 2: Download background images ---
-    print("\n[STEP 2/5] Downloading background images...")
-    bg_data = search_background_images(count=len(quotes))
+    # Extra backgrounds for breathing slides (image-only, no text)
+    num_breathing = max(1, len(quotes) // 3)
+    total_bgs_needed = len(quotes) + num_breathing
+    print(f"\n[STEP 2/5] Downloading background images ({len(quotes)} quote + {num_breathing} breathing)...")
+    bg_data = search_background_images(count=total_bgs_needed)
 
     if not bg_data:
         print("[ERROR] No background images downloaded")
         return None
 
-    # --- Pad if fewer backgrounds than quotes ---
-    while len(bg_data) < len(quotes):
+    # --- Pad if fewer backgrounds than needed ---
+    while len(bg_data) < total_bgs_needed:
         bg_data.append(random.choice(bg_data))
 
-    # --- STEP 3: Render quote images ---
+    # --- Split backgrounds: quote slides get first N, breathing slides get the rest ---
+    quote_bg_data = bg_data[:len(quotes)]
+    breathing_bg_data = bg_data[len(quotes):]
+    # --- Breathing slides prefer epic imagery (dramatic visuals, no text) ---
+    breathing_bg_data.sort(key=lambda x: 0 if x[1] == "epic" else 1)
+
+    # --- STEP 3: Render quote images + breathing slides ---
     print("\n[STEP 3/5] Rendering quote images...")
     rendered_images = []
+    slide_types = []
+
     # --- Pick text style based on background type ---
     # Plain = highlight, crimson, or clean_dark
     # Urban/Epic = rotate through the visual styles
     non_plain_styles = [
         "minimalist", "bold_caps", "handwritten", "stacked", "editorial",
-        "glow", "bracket", "billboard", "moody_serif",
+        "glow", "bracket", "billboard", "moody_serif", "graffiti",
     ]
     plain_styles = ["highlight", "crimson", "clean_dark"]
+    # --- Shuffle style order for variety across videos ---
+    random.shuffle(non_plain_styles)
+    random.shuffle(plain_styles)
     non_plain_idx = 0
     plain_idx = 0
+    last_style = None
+
     for i, quote in enumerate(quotes):
-        img_path, bg_type, text_color = bg_data[i]
+        img_path, bg_type, text_color = quote_bg_data[i]
         if bg_type == "plain":
             style = plain_styles[plain_idx % len(plain_styles)]
             plain_idx += 1
         else:
             style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
             non_plain_idx += 1
+        # --- Prevent same style back-to-back ---
+        if style == last_style:
+            if bg_type == "plain":
+                plain_idx += 1
+                style = plain_styles[plain_idx % len(plain_styles)]
+            else:
+                non_plain_idx += 1
+                style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
+        last_style = style
+
         out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
         rendered = render_quote_image(
             quote, img_path, style_name=style, output_path=out_path,
             bg_type=bg_type, text_color_override=text_color,
         )
         rendered_images.append(rendered)
+        slide_types.append(("quote", bg_type))
+
+    # --- Create breathing slides (image-only, no text, darkened epic/urban photos) ---
+    print(f"[QUOTE_REEL] Creating {num_breathing} breathing slides (image-only)...")
+    for i, (img_path, bg_type, _) in enumerate(breathing_bg_data):
+        bg = Image.open(img_path).convert("RGB")
+        # --- Resize to 1080x1920 ---
+        target_w, target_h = 1080, 1920
+        bg_ratio = bg.width / bg.height
+        target_ratio = target_w / target_h
+        if bg_ratio > target_ratio:
+            new_h = target_h
+            new_w = int(new_h * bg_ratio)
+        else:
+            new_w = target_w
+            new_h = int(new_w / bg_ratio)
+        bg = bg.resize((new_w, new_h), Image.LANCZOS)
+        left = (new_w - target_w) // 2
+        top = (new_h - target_h) // 2
+        bg = bg.crop((left, top, left + target_w, top + target_h))
+        # --- Subtle darken for cinematic feel ---
+        bg_arr = np.array(bg, dtype=np.float32) * 0.60
+        bg = Image.fromarray(bg_arr.astype(np.uint8))
+        out_path = os.path.join(config.TEMP_DIR, f"breathing_{i}.png")
+        bg.save(out_path, quality=95)
+        rendered_images.append(out_path)
+        slide_types.append(("breathing", bg_type))
+        print(f"[QUOTE_REEL] Breathing slide #{i+1}: {bg_type}")
+
+    # --- Interleave breathing slides between quote slides ---
+    # Insert 1 breathing slide every 2-3 quote slides for visual rhythm
+    final_images = []
+    final_bg_types = []
+    quote_slides = [(img, st) for img, st in zip(rendered_images, slide_types) if st[0] == "quote"]
+    breathing_slides = [(img, st) for img, st in zip(rendered_images, slide_types) if st[0] == "breathing"]
+    breath_idx = 0
+    for qi, (qimg, qst) in enumerate(quote_slides):
+        final_images.append(qimg)
+        final_bg_types.append(qst[1])
+        # --- Insert a breathing slide every 2-3 quotes (not after last) ---
+        if breath_idx < len(breathing_slides) and qi > 0 and qi % 2 == 0 and qi < len(quote_slides) - 1:
+            bimg, bst = breathing_slides[breath_idx]
+            final_images.append(bimg)
+            final_bg_types.append(bst[1])
+            breath_idx += 1
+
+    rendered_images = final_images
 
     # --- STEP 4: Select audio beat ---
     print("\n[STEP 4/5] Selecting audio beat...")
@@ -1049,10 +1195,9 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     timestamp = _time.strftime("%Y%m%d_%H%M%S")
     output_path = os.path.join(config.OUTPUT_DIR, f"reel_{safe_topic}_{timestamp}.mp4")
 
-    # --- Extract bg_types for zoom assignment ---
-    slide_bg_types = [bg_data[i][1] for i in range(len(rendered_images))]
+    # --- Use interleaved bg_types (includes breathing slides) ---
     assemble_quote_reel(rendered_images, beat_path, output_path,
-                        duration=duration, bg_types=slide_bg_types)
+                        duration=duration, bg_types=final_bg_types)
 
     # --- Upload to cloud if configured ---
     from blob_storage import upload_pipeline_output
