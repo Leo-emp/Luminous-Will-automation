@@ -71,16 +71,13 @@ BG_EPIC_QUERIES = [
     "bull portrait dark", "dark horse running",
 ]
 
-# Category 3: Plain/solid color backgrounds (generated programmatically)
-BG_PLAIN_COLORS = [
-    {"bg": (245, 240, 232), "text": (25, 25, 25)},       # off-white/cream
-    {"bg": (235, 230, 220), "text": (30, 30, 30)},        # warm beige
-    {"bg": (224, 224, 224), "text": (20, 20, 20)},         # light grey
-    {"bg": (200, 195, 185), "text": (25, 25, 25)},         # warm grey
-    {"bg": (30, 30, 30), "text": (255, 255, 255)},         # dark charcoal
-    {"bg": (15, 15, 15), "text": (255, 255, 255)},         # near black
-    {"bg": (245, 245, 245), "text": (15, 15, 15)},         # clean white
-    {"bg": (210, 200, 180), "text": (35, 30, 25)},         # parchment
+# Category 3: Book page / paper texture backgrounds (from Pexels)
+BG_PAPER_QUERIES = [
+    "old paper texture", "book page close up", "vintage paper texture",
+    "white paper texture", "parchment texture", "aged paper",
+    "notebook page blank", "crumpled paper texture", "paper grain close",
+    "concrete wall white texture", "white wall texture rough",
+    "plaster wall texture light",
 ]
 
 # --- Background type distribution (controls variety like Apollo Method) ---
@@ -96,14 +93,14 @@ MARGIN_Y_RATIO = 0.15   # 15% from top/bottom edges (288px on 1920h)
 # Matched to @theapollomethod's actual styles from their viral posts
 QUOTE_STYLES = {
     "highlight": {
-        # Yellow marker highlight behind text — Apollo Method signature style
-        # Ref: "If I play, I play to win.", "Pain builds you. Comfort weakens you."
-        "font_key": "montserrat",
+        # Yellow-green marker highlight — Apollo Method signature style
+        # Ref: "It's going to happen because I'm going to make it happen."
+        "font_key": "playfair",
         "base_font_size": 80,
-        "text_color": (0, 0, 0),
-        "highlight_color": (255, 234, 0),
+        "text_color": (15, 15, 15),
+        "highlight_color": (200, 255, 0),
         "highlight_padding_x": 18,
-        "highlight_padding_y": 10,
+        "highlight_padding_y": 12,
         "alignment": "left",
         "uppercase": False,
         "line_spacing_ratio": 1.8,
@@ -240,21 +237,25 @@ def _pick_bg_type():
 
 def _create_plain_background(index):
     """
-    # Creates a solid color background image (no Pexels needed)
+    # Downloads a real paper/book page texture from Pexels
+    # Falls back to a generated texture if Pexels fails
     # Returns (image_path, text_color_override)
     """
-    color_set = random.choice(BG_PLAIN_COLORS)
-    img = Image.new("RGB", (1080, 1920), color_set["bg"])
+    queries = random.sample(BG_PAPER_QUERIES, min(3, len(BG_PAPER_QUERIES)))
+    for query in queries:
+        img_path = _download_pexels_image(query, f"plain_{index}")
+        if img_path:
+            print(f"[QUOTE_REEL] Background #{index+1}: paper texture")
+            return img_path, (15, 15, 15)
 
-    # --- Add subtle noise/grain for texture (not flat digital) ---
-    img_array = np.array(img, dtype=np.int16)
-    noise = np.random.randint(-3, 4, img_array.shape, dtype=np.int16)
-    img_array = np.clip(img_array + noise, 0, 255)
-    img = Image.fromarray(img_array.astype(np.uint8))
-
+    # --- Fallback: generate basic paper texture ---
+    base = np.full((1920, 1080, 3), [215, 210, 200], dtype=np.int16)
+    noise = np.random.randint(-8, 9, base.shape, dtype=np.int16)
+    result = np.clip(base + noise, 0, 255).astype(np.uint8)
+    img = Image.fromarray(result)
     img_path = os.path.join(config.TEMP_DIR, f"quote_bg_plain_{index}.png")
     img.save(img_path, quality=95)
-    return img_path, color_set["text"]
+    return img_path, (15, 15, 15)
 
 
 def _download_pexels_image(query, index):
@@ -529,20 +530,39 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
         # --- Clamp x so text + width stays inside safe zone ---
         x = max(margin_x, min(x, target_w - margin_x - lw))
 
-        # --- Draw yellow highlight bar behind text ---
+        # --- Draw marker highlight behind text (realistic, semi-transparent) ---
         if style.get("highlight_color"):
             pad_x = style.get("highlight_padding_x", 16)
-            pad_y = style.get("highlight_padding_y", 8)
-            rect = [
-                x - pad_x,
-                y - pad_y,
-                x + lw + pad_x,
-                y + lh + pad_y + 4,
-            ]
-            # --- Clamp highlight to image bounds ---
-            rect[0] = max(0, rect[0])
-            rect[2] = min(target_w, rect[2])
-            draw.rectangle(rect, fill=style["highlight_color"])
+            pad_y = style.get("highlight_padding_y", 12)
+            rect_x1 = max(0, x - pad_x)
+            rect_y1 = y - pad_y
+            rect_x2 = min(target_w, x + lw + pad_x)
+            rect_y2 = y + lh + pad_y + 4
+
+            # --- Create semi-transparent highlight overlay (like real marker) ---
+            highlight_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+            h_draw = ImageDraw.Draw(highlight_layer)
+
+            # --- Draw main highlight bar with transparency ---
+            h_color = style["highlight_color"] + (200,)
+            h_draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=h_color)
+
+            # --- Add rough edges (random jitter on top/bottom borders) ---
+            for rx in range(rect_x1, rect_x2, 3):
+                jitter_top = random.randint(-2, 3)
+                jitter_bot = random.randint(-2, 3)
+                if jitter_top != 0:
+                    edge_color = style["highlight_color"] + (random.randint(80, 150),)
+                    h_draw.rectangle([rx, rect_y1 + jitter_top - 2, rx + 3, rect_y1 + 1],
+                                     fill=edge_color)
+                if jitter_bot != 0:
+                    edge_color = style["highlight_color"] + (random.randint(80, 150),)
+                    h_draw.rectangle([rx, rect_y2 - 1, rx + 3, rect_y2 + jitter_bot + 2],
+                                     fill=edge_color)
+
+            # --- Composite highlight onto background ---
+            bg = Image.alpha_composite(bg.convert("RGBA"), highlight_layer).convert("RGB")
+            draw = ImageDraw.Draw(bg)
 
         # --- Draw text shadow (skip on plain light backgrounds — looks dirty) ---
         if style.get("shadow") and bg_type != "plain":
@@ -799,11 +819,18 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     # --- STEP 3: Render quote images ---
     print("\n[STEP 3/5] Rendering quote images...")
     rendered_images = []
-    # --- Use different styles for variety ---
-    style_names = list(QUOTE_STYLES.keys())
+    # --- Pick text style based on background type ---
+    # Plain = always highlight (book page + marker look)
+    # Urban/Epic = rotate through other styles
+    non_plain_styles = ["minimalist", "bold_caps", "handwritten", "stacked", "editorial"]
+    non_plain_idx = 0
     for i, quote in enumerate(quotes):
-        style = style_names[i % len(style_names)]
         img_path, bg_type, text_color = bg_data[i]
+        if bg_type == "plain":
+            style = "highlight"
+        else:
+            style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
+            non_plain_idx += 1
         out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
         rendered = render_quote_image(
             quote, img_path, style_name=style, output_path=out_path,
