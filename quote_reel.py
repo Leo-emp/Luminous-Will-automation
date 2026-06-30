@@ -3,7 +3,7 @@ import random
 import textwrap
 import numpy as np
 import config
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 # ============================================================
 # QUOTE REEL GENERATOR
@@ -46,7 +46,7 @@ FONT_FILES = {
 
 # --- Background categories (matched from @theapollomethod's 3 visual styles) ---
 
-# Category 1: Urban/textured real-world photos
+# Category 1: Urban/textured real-world photos + aesthetic dark interiors
 BG_URBAN_QUERIES = [
     "dark concrete wall", "dark texture background", "black wall",
     "dark urban street", "moody architecture", "dark gym",
@@ -55,6 +55,10 @@ BG_URBAN_QUERIES = [
     "foggy dark street", "shadow wall", "dark minimal interior",
     "grunge wall texture", "dark hallway", "night city street",
     "dark staircase", "dark empty room",
+    # --- Aesthetic/luxury dark (ref: IMG_5111 luxury interior) ---
+    "dark luxury interior", "dark modern apartment", "dark aesthetic room",
+    "dark coffee shop moody", "dark bookshelf aesthetic", "dark desk setup",
+    "dark bathroom luxury", "dark bedroom moody", "dark lounge interior",
 ]
 
 # Category 2: Epic/mythological/warrior imagery (Sisyphus, statues, lions, etc.)
@@ -69,6 +73,9 @@ BG_EPIC_QUERIES = [
     "muscular man silhouette", "statue of david", "greek god statue",
     "samurai dark", "gladiator", "phoenix dark art",
     "bull portrait dark", "dark horse running",
+    # --- Conceptual/symbolic (ref: IMG_5107 chess mirror) ---
+    "chess piece mirror", "hourglass dark", "compass dark background",
+    "crown dark background", "broken chain dark", "fire dark background",
 ]
 
 # Category 3: Book page / paper texture backgrounds (from Pexels)
@@ -171,6 +178,101 @@ QUOTE_STYLES = {
         "split_on_sentences": False,
         "shadow": True,
         "bg_darken": 0.55,
+    },
+    "glow": {
+        # Warm backlit 3D text — ref: IMG_5112 "I WILL WIN"
+        # Dark letters with golden glow radiating from behind on smooth dark wall
+        "font_key": "bebas",
+        "base_font_size": 180,
+        "text_color": (60, 55, 45),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": True,
+        "line_spacing_ratio": 1.6,
+        "split_per_word": True,
+        "split_on_sentences": False,
+        "shadow": False,
+        "glow": True,
+        "glow_color": (255, 220, 130),
+        "glow_radius": 40,
+        "glow_passes": 12,
+        "force_plain_bg": True,
+        "plain_color": (25, 23, 22),
+    },
+    "crimson": {
+        # Deep red serif on cream — ref: IMG_5110 "Do it for your future self."
+        # Elegant, feminine, premium magazine feel
+        "font_key": "playfair",
+        "base_font_size": 85,
+        "text_color": (140, 15, 15),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": False,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": False,
+        "shadow": False,
+        "bg_darken": 0.0,
+        "force_plain_bg": True,
+        "plain_color": (245, 240, 232),
+    },
+    "bracket": {
+        # Bracketed stencil text — ref: IMG_5108 "[don't wish for it, work for it]"
+        # White text inside square bracket frame on dark bg
+        "font_key": "montserrat",
+        "base_font_size": 70,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": False,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": False,
+        "shadow": True,
+        "brackets": True,
+        "bg_darken": 0.45,
+    },
+    "billboard": {
+        # Massive impact text — ref: IMG_5114 "YOU ONLY FAIL WHEN YOU STOP TRYING"
+        # One word per line, fills the frame, maximum visual weight
+        "font_key": "anton",
+        "base_font_size": 140,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": True,
+        "line_spacing_ratio": 1.1,
+        "split_on_sentences": False,
+        "shadow": True,
+        "bg_darken": 0.45,
+    },
+    "moody_serif": {
+        # White serif caps on dark moody photos — ref: IMG_5111 "YOUR ONLY LIMIT IS YOUR MIND"
+        # Each word on its own line, serif elegance on dark aesthetic backgrounds
+        "font_key": "playfair",
+        "base_font_size": 100,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": True,
+        "line_spacing_ratio": 1.4,
+        "split_on_sentences": True,
+        "shadow": True,
+        "bg_darken": 0.50,
+    },
+    "clean_dark": {
+        # White sans-serif on pure black — ref: IMG_5109 "Stick to the plan. Not your mood."
+        # Minimal, centered, clean, no background image needed
+        "font_key": "montserrat",
+        "base_font_size": 80,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": False,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": False,
+        "shadow": False,
+        "bg_darken": 0.0,
+        "force_plain_bg": True,
+        "plain_color": (10, 10, 10),
     },
 }
 
@@ -363,7 +465,10 @@ def _split_quote_lines(text, style, font, max_text_width):
     # Uses sentence splitting for stacked style, word-wrap for others
     # Dynamically reduces font size if text still doesn't fit
     """
-    if style.get("split_on_sentences"):
+    if style.get("split_per_word"):
+        # --- One word per line for maximum impact (glow, billboard) ---
+        lines = [w.strip() for w in text.split() if w.strip()]
+    elif style.get("split_on_sentences"):
         # --- Split on sentence boundaries (periods, commas for stacked/handwritten) ---
         import re
         raw_parts = re.split(r'(?<=[.!?])\s+', text)
@@ -434,6 +539,12 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     left = (new_w - target_w) // 2
     top = (new_h - target_h) // 2
     bg = bg.crop((left, top, left + target_w, top + target_h))
+
+    # --- Force plain color background for styles that need it (crimson, clean_dark) ---
+    if style.get("force_plain_bg"):
+        plain_color = style.get("plain_color", (10, 10, 10))
+        bg = Image.new("RGB", (target_w, target_h), plain_color)
+        bg_type = "plain"
 
     # --- Darken background (skip for plain — they're already the right color) ---
     if bg_type != "plain":
@@ -515,6 +626,40 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     # --- Vertically center the text block ---
     start_y = (target_h - total_text_height) // 2
 
+    # --- Glow effect: additive light behind text for backlit 3D look ---
+    if style.get("glow"):
+        glow_color = style.get("glow_color", (220, 180, 100))
+        glow_radius = style.get("glow_radius", 25)
+        # --- Draw white text on black for light map ---
+        light_map = Image.new("RGB", (target_w, target_h), (0, 0, 0))
+        light_draw = ImageDraw.Draw(light_map)
+        for i, line in enumerate(lines):
+            lw, lh = line_metrics[i]
+            y = start_y + (i * line_spacing)
+            if style["alignment"] == "center":
+                x = (target_w - lw) // 2
+            elif style["alignment"] == "left":
+                x = margin_x
+            else:
+                x = target_w - lw - margin_x
+            x = max(margin_x, min(x, target_w - margin_x - lw))
+            # --- Thick text base (multiple offsets) for wider glow ---
+            for dx in range(-4, 5):
+                for dy in range(-4, 5):
+                    light_draw.text((x + dx, y + dy), line, font=font,
+                                    fill=(255, 255, 255))
+        # --- Blur to create soft light spread ---
+        light_map = light_map.filter(ImageFilter.GaussianBlur(radius=glow_radius))
+        # --- Additive blend: bg + (light_map * glow_color * intensity) ---
+        bg_arr = np.array(bg, dtype=np.float32)
+        light_arr = np.array(light_map, dtype=np.float32) / 255.0
+        glow_intensity = 1.8
+        for c in range(3):
+            bg_arr[:, :, c] += light_arr[:, :, c] * glow_color[c] * glow_intensity / 255.0 * 255
+        bg_arr = np.clip(bg_arr, 0, 255).astype(np.uint8)
+        bg = Image.fromarray(bg_arr)
+        draw = ImageDraw.Draw(bg)
+
     for i, line in enumerate(lines):
         lw, lh = line_metrics[i]
         y = start_y + (i * line_spacing)
@@ -572,6 +717,42 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
 
         # --- Draw main text ---
         draw.text((x, y), line, font=font, fill=text_color_active)
+
+    # --- Draw bracket frame around text block if style has brackets ---
+    if style.get("brackets"):
+        bracket_font_size = int(font_size * 1.8)
+        try:
+            bracket_font = ImageFont.truetype(FONT_FILES["montserrat"], bracket_font_size)
+        except Exception:
+            bracket_font = font
+        # --- Calculate text block bounds ---
+        block_top = start_y - 20
+        block_bottom = start_y + (len(lines) * line_spacing) + 20
+        max_line_w = max(lw for lw, lh in line_metrics)
+        if style["alignment"] == "center":
+            block_left = (target_w - max_line_w) // 2 - 40
+            block_right = (target_w + max_line_w) // 2 + 40
+        else:
+            block_left = margin_x - 40
+            block_right = margin_x + max_line_w + 40
+        # --- Draw square brackets ---
+        bracket_color = (255, 255, 255)
+        bracket_thickness = 4
+        bracket_len = 50
+        # --- Top-left bracket [ ---
+        draw.line([(block_left, block_top), (block_left + bracket_len, block_top)],
+                  fill=bracket_color, width=bracket_thickness)
+        draw.line([(block_left, block_top), (block_left, block_bottom)],
+                  fill=bracket_color, width=bracket_thickness)
+        draw.line([(block_left, block_bottom), (block_left + bracket_len, block_bottom)],
+                  fill=bracket_color, width=bracket_thickness)
+        # --- Bottom-right bracket ] ---
+        draw.line([(block_right - bracket_len, block_top), (block_right, block_top)],
+                  fill=bracket_color, width=bracket_thickness)
+        draw.line([(block_right, block_top), (block_right, block_bottom)],
+                  fill=bracket_color, width=bracket_thickness)
+        draw.line([(block_right - bracket_len, block_bottom), (block_right, block_bottom)],
+                  fill=bracket_color, width=bracket_thickness)
 
     # --- Save ---
     if not output_path:
@@ -820,14 +1001,20 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     print("\n[STEP 3/5] Rendering quote images...")
     rendered_images = []
     # --- Pick text style based on background type ---
-    # Plain = always highlight (book page + marker look)
-    # Urban/Epic = rotate through other styles
-    non_plain_styles = ["minimalist", "bold_caps", "handwritten", "stacked", "editorial"]
+    # Plain = highlight, crimson, or clean_dark
+    # Urban/Epic = rotate through the visual styles
+    non_plain_styles = [
+        "minimalist", "bold_caps", "handwritten", "stacked", "editorial",
+        "glow", "bracket", "billboard", "moody_serif",
+    ]
+    plain_styles = ["highlight", "crimson", "clean_dark"]
     non_plain_idx = 0
+    plain_idx = 0
     for i, quote in enumerate(quotes):
         img_path, bg_type, text_color = bg_data[i]
         if bg_type == "plain":
-            style = "highlight"
+            style = plain_styles[plain_idx % len(plain_styles)]
+            plain_idx += 1
         else:
             style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
             non_plain_idx += 1
