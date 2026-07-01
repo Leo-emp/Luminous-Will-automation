@@ -292,6 +292,21 @@ QUOTE_STYLES = {
         "spray_paint": True,
         "bg_darken": 0.55,
     },
+    "strikethrough": {
+        # Crossed-out text + replacement — ref: video14 "~~I FAILED~~ I WILL TRY AGAIN"
+        # Top line has strikethrough, bottom line is the real message
+        "font_key": "anton",
+        "base_font_size": 90,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": True,
+        "line_spacing_ratio": 2.0,
+        "split_on_sentences": True,
+        "shadow": True,
+        "strikethrough": True,
+        "bg_darken": 0.55,
+    },
 }
 
 # --- Graffiti color variations (randomly picked per render) ---
@@ -791,6 +806,15 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
             # --- Draw main text ---
             draw.text((x, y), line, font=font, fill=text_color_active)
 
+        # --- Strikethrough: draw line through first sentence, keep second clean ---
+        if style.get("strikethrough") and i == 0:
+            strike_y = y + lh // 2
+            strike_color = (180, 40, 40)
+            draw.line([(x - 10, strike_y), (x + lw + 10, strike_y)],
+                      fill=strike_color, width=max(4, font_size // 18))
+            draw.line([(x - 10, strike_y + 2), (x + lw + 10, strike_y + 2)],
+                      fill=strike_color, width=max(3, font_size // 22))
+
     # --- Draw bracket frame around text block if style has brackets ---
     if style.get("brackets"):
         bracket_font_size = int(font_size * 1.8)
@@ -862,26 +886,24 @@ def _assign_zoom_types(bg_types):
     #   - At least 1 slide must have punch_zoom for impact
     #   - At least 1 slide must be static for contrast
     """
+    # --- Apollo Method finding: NEVER truly static. Always slow zoom. ---
     zoom_map = {
-        "plain": ["static", "static", "slow_zoom"],
+        "plain": ["slow_zoom", "slow_zoom", "slow_zoom"],
         "urban": ["slow_zoom", "punch_zoom", "slow_zoom"],
         "epic": ["slow_zoom", "punch_zoom", "slow_zoom", "punch_zoom"],
     }
 
     zooms = []
     for bg_type in bg_types:
-        pool = zoom_map.get(bg_type, ["static"])
+        pool = zoom_map.get(bg_type, ["slow_zoom"])
         zooms.append(random.choice(pool))
 
-    # --- Guarantee at least 1 punch_zoom and 1 static ---
+    # --- Guarantee at least 1 punch_zoom for impact ---
     if "punch_zoom" not in zooms:
-        # --- Put punch on first non-plain slide ---
         for i, bg in enumerate(bg_types):
             if bg != "plain":
                 zooms[i] = "punch_zoom"
                 break
-    if "static" not in zooms and len(zooms) > 2:
-        zooms[0] = "static"
 
     return zooms
 
@@ -1089,7 +1111,7 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     # Urban/Epic = rotate through the visual styles
     non_plain_styles = [
         "minimalist", "bold_caps", "handwritten", "stacked", "editorial",
-        "glow", "bracket", "billboard", "moody_serif", "graffiti",
+        "glow", "bracket", "billboard", "moody_serif", "graffiti", "strikethrough",
     ]
     plain_styles = ["highlight", "crimson", "clean_dark"]
     # --- Shuffle style order for variety across videos ---
@@ -1170,6 +1192,44 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
             breath_idx += 1
 
     rendered_images = final_images
+
+    # --- Create branded CTA end card (Apollo Method always ends with one) ---
+    print("[QUOTE_REEL] Creating branded CTA end card...")
+    cta_img = Image.new("RGB", (1080, 1920), (8, 8, 8))
+    cta_draw = ImageDraw.Draw(cta_img)
+    # --- Load fonts for CTA ---
+    try:
+        cta_font_big = ImageFont.truetype(FONT_FILES["bebas"], 72)
+        cta_font_small = ImageFont.truetype(FONT_FILES["montserrat"], 36)
+    except Exception:
+        cta_font_big = ImageFont.truetype(FONT_FILES["montserrat"], 72)
+        cta_font_small = ImageFont.truetype(FONT_FILES["montserrat"], 36)
+    # --- Draw "LUMINOUS WILL" brand name ---
+    brand_text = "LUMINOUS WILL"
+    brand_bbox = cta_draw.textbbox((0, 0), brand_text, font=cta_font_big)
+    brand_w = brand_bbox[2] - brand_bbox[0]
+    cta_draw.text(((1080 - brand_w) // 2, 820), brand_text,
+                  font=cta_font_big, fill=(255, 255, 255))
+    # --- Draw tagline ---
+    tagline = "Follow for daily motivation"
+    tag_bbox = cta_draw.textbbox((0, 0), tagline, font=cta_font_small)
+    tag_w = tag_bbox[2] - tag_bbox[0]
+    cta_draw.text(((1080 - tag_w) // 2, 920), tagline,
+                  font=cta_font_small, fill=(160, 160, 160))
+    # --- Add logo if exists ---
+    if os.path.exists(config.LOGO_PATH):
+        try:
+            logo = Image.open(config.LOGO_PATH).convert("RGBA")
+            logo_size = 120
+            logo = logo.resize((logo_size, logo_size), Image.LANCZOS)
+            logo_x = (1080 - logo_size) // 2
+            cta_img.paste(logo, (logo_x, 680), logo)
+        except Exception:
+            pass
+    cta_path = os.path.join(config.TEMP_DIR, "cta_end_card.png")
+    cta_img.save(cta_path, quality=95)
+    rendered_images.append(cta_path)
+    final_bg_types.append("plain")
 
     # --- STEP 4: Select audio beat ---
     print("\n[STEP 4/5] Selecting audio beat...")
