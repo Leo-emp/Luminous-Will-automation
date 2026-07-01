@@ -859,6 +859,36 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     return output_path
 
 
+def render_progressive_frames(quote_text, bg_image_path, style_name=None,
+                              output_dir=None, bg_type="urban",
+                              text_color_override=None):
+    """
+    # Renders word-by-word reveal frames for a quote
+    # Returns list of image paths: [1 word, 2 words, ..., all words]
+    # Used for Apollo Method-style text reveal animation
+    """
+    if not output_dir:
+        output_dir = config.TEMP_DIR
+    os.makedirs(output_dir, exist_ok=True)
+
+    words = quote_text.split()
+    frame_paths = []
+    tag = random.randint(1000, 9999)
+
+    for word_count in range(1, len(words) + 1):
+        partial_text = " ".join(words[:word_count])
+        out_path = os.path.join(output_dir, f"reveal_{tag}_w{word_count}.png")
+        render_quote_image(
+            partial_text, bg_image_path, style_name=style_name,
+            output_path=out_path, bg_type=bg_type,
+            text_color_override=text_color_override,
+        )
+        frame_paths.append(out_path)
+
+    print(f"[QUOTE_REEL] Progressive frames: {len(frame_paths)} steps for '{quote_text[:30]}...'")
+    return frame_paths
+
+
 def detect_beats(audio_path):
     """
     # Detects beat timestamps in an audio file using librosa
@@ -954,11 +984,15 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
         print(f"  Slide {i+1}: {bt} bg, {zt} zoom")
 
     clips = []
-    for i, img_path in enumerate(quote_images):
+    for i, img_entry in enumerate(quote_images):
         start_time = i * time_per_image
         end_time = min((i + 1) * time_per_image, total_duration)
         clip_duration = end_time - start_time
         zoom_type = zoom_types[i]
+
+        # --- Check if this is a progressive reveal (list) or static (string) ---
+        is_progressive = isinstance(img_entry, list)
+        img_path = img_entry[-1] if is_progressive else img_entry
 
         # --- Find the first beat in this slide's window (for punch zoom) ---
         first_beat = None
@@ -1003,24 +1037,56 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
         img = Image.open(img_path)
         img_w, img_h = img.size
 
-        def make_frame_func(path, w, h, zfn, is_static):
-            img_array = np.array(Image.open(path))
-            def frame_func(t):
-                z = zfn(t)
-                if is_static or z <= 1.001:
-                    return img_array
-                crop_w = int(w / z)
-                crop_h = int(h / z)
-                x1 = (w - crop_w) // 2
-                y1 = (h - crop_h) // 2
-                cropped = img_array[y1:y1+crop_h, x1:x1+crop_w]
-                from PIL import Image as PILImage
-                frame = PILImage.fromarray(cropped).resize((w, h), PILImage.LANCZOS)
-                return np.array(frame)
-            return frame_func
+        if is_progressive:
+            # --- Word-by-word reveal: switch between pre-rendered frames ---
+            def make_progressive_frame_func(frame_paths, dur, w, h, zfn):
+                frame_arrays = [np.array(Image.open(p)) for p in frame_paths]
+                n = len(frame_arrays)
+                # --- Reserve last 30% of duration to hold the final frame ---
+                reveal_duration = dur * 0.70
+                time_per_word = reveal_duration / n if n > 0 else dur
+                def frame_func(t):
+                    # --- Pick which word-count frame to show ---
+                    if t >= reveal_duration:
+                        idx = n - 1
+                    else:
+                        idx = min(int(t / time_per_word), n - 1)
+                    arr = frame_arrays[idx]
+                    z = zfn(t)
+                    if z <= 1.001:
+                        return arr
+                    crop_w = int(w / z)
+                    crop_h = int(h / z)
+                    x1 = (w - crop_w) // 2
+                    y1 = (h - crop_h) // 2
+                    cropped = arr[y1:y1+crop_h, x1:x1+crop_w]
+                    from PIL import Image as PILImage
+                    resized = PILImage.fromarray(cropped).resize((w, h), PILImage.LANCZOS)
+                    return np.array(resized)
+                return frame_func
 
-        frame_fn = make_frame_func(img_path, img_w, img_h, zoom_fn,
-                                    zoom_type == "static")
+            frame_fn = make_progressive_frame_func(
+                img_entry, clip_duration, img_w, img_h, zoom_fn)
+        else:
+            # --- Static slide: single image with zoom ---
+            def make_frame_func(path, w, h, zfn, is_static):
+                img_array = np.array(Image.open(path))
+                def frame_func(t):
+                    z = zfn(t)
+                    if is_static or z <= 1.001:
+                        return img_array
+                    crop_w = int(w / z)
+                    crop_h = int(h / z)
+                    x1 = (w - crop_w) // 2
+                    y1 = (h - crop_h) // 2
+                    cropped = img_array[y1:y1+crop_h, x1:x1+crop_w]
+                    from PIL import Image as PILImage
+                    frame = PILImage.fromarray(cropped).resize((w, h), PILImage.LANCZOS)
+                    return np.array(frame)
+                return frame_func
+
+            frame_fn = make_frame_func(img_path, img_w, img_h, zoom_fn,
+                                        zoom_type == "static")
 
         from moviepy import VideoClip
         clip = VideoClip(frame_fn, duration=clip_duration)
@@ -1139,12 +1205,26 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
                 style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
         last_style = style
 
-        out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
-        rendered = render_quote_image(
-            quote, img_path, style_name=style, output_path=out_path,
-            bg_type=bg_type, text_color_override=text_color,
-        )
-        rendered_images.append(rendered)
+        # --- Word-by-word reveal on ~40% of slides (Apollo Method signature) ---
+        # Only on styles where progressive reveal looks clean
+        reveal_styles = {"minimalist", "bold_caps", "clean_dark", "moody_serif",
+                         "billboard", "editorial", "bracket"}
+        use_reveal = style in reveal_styles and random.random() < 0.4
+
+        if use_reveal:
+            frames = render_progressive_frames(
+                quote, img_path, style_name=style,
+                output_dir=config.TEMP_DIR, bg_type=bg_type,
+                text_color_override=text_color,
+            )
+            rendered_images.append(frames)
+        else:
+            out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
+            rendered = render_quote_image(
+                quote, img_path, style_name=style, output_path=out_path,
+                bg_type=bg_type, text_color_override=text_color,
+            )
+            rendered_images.append(rendered)
         slide_types.append(("quote", bg_type))
 
     # --- Create breathing slides (image-only, no text, darkened epic/urban photos) ---
