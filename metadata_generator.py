@@ -283,3 +283,221 @@ def _fallback_metadata(topic, video_format):
             "hashtags": ["darkmotivation", "psychology", "mindset"],  # 3 only per spec
         },
     }
+
+
+# ============================================================
+# QUOTE REEL METADATA — TAILORED CAPTION + HASHTAG PIPELINE
+# The quote itself is the hook. No generic filler.
+#
+# Strategy:
+#   - TikTok: punchiest quote as caption, save-driven CTA
+#   - Instagram: quote hook + context body + save/share CTA
+#   - YouTube Shorts: quote as title, topic-rich description
+#   - Facebook: quote + question CTA for comments
+#   - Hashtags: quote-reel niche + dark motivation + trending
+# ============================================================
+
+# --- Quote reel hashtag pools ---
+REEL_HASHTAGS_TRENDING = [
+    "fyp", "foryou", "viral", "explore", "trending",
+]
+
+REEL_HASHTAGS_QUOTE = [
+    "quotestoliveby", "quotesoftheday", "motivationalquotes",
+    "dailyquotes", "quotereels", "quotestagram", "quotesdaily",
+    "deepquotes", "quoteoftheday", "realquotes",
+]
+
+REEL_HASHTAGS_DARK = [
+    "darkmotivation", "stoicquotes", "sigmaquotes", "mentaltoughness",
+    "darkpsychology", "stoicmindset", "disciplinequotes",
+    "luminouswill", "mindsetshift", "powerofmind",
+]
+
+
+def _pick_hook_quote(quotes):
+    """
+    # Picks the punchiest quote for the caption hook.
+    # Prefers 3-8 word quotes — short hits harder in a caption.
+    # Falls back to shortest quote if none in ideal range.
+    """
+    ideal = [q for q in quotes if 3 <= len(q.split()) <= 8]
+    if ideal:
+        return min(ideal, key=len)
+    return min(quotes, key=len)
+
+
+def generate_reel_metadata(topic, quotes):
+    """
+    # Generates viral captions + hashtags tailored for quote reels.
+    # Uses the actual quotes as hooks — not generic motivation copy.
+    #
+    # Args:
+    #   topic  : str  — e.g. "Discipline"
+    #   quotes : list — the actual quotes in the reel
+    #
+    # Returns:
+    #   dict with keys: "youtube", "tiktok", "instagram", "facebook"
+    """
+    if not quotes:
+        return _fallback_metadata(topic, "short")
+
+    hook = _pick_hook_quote(quotes)
+    topic_tag = topic.lower().replace(" ", "").replace("-", "")
+
+    # --- Try Gemini for premium captions ---
+    if config.GEMINI_API_KEY:
+        result = _gemini_reel_captions(topic, quotes, hook)
+        if result:
+            return result
+
+    # --- Fallback: template-based ---
+    return _reel_fallback(topic, quotes, hook, topic_tag)
+
+
+def _gemini_reel_captions(topic, quotes, hook):
+    """
+    # Uses Gemini to write platform-specific captions for a quote reel.
+    # Passes the actual quotes so captions reference the real content.
+    """
+    quotes_text = "\n".join([f"- {q}" for q in quotes])
+
+    prompt = f"""You are writing viral social media captions for a QUOTE REEL video.
+
+BRAND: Luminous Will — stoic philosophy, dark psychology, self-mastery.
+Tone: dark, raw, minimal. No emojis. No fluff.
+
+TOPIC: {topic}
+QUOTES IN THIS REEL:
+{quotes_text}
+
+BEST HOOK QUOTE: "{hook}"
+
+RULES:
+1. Use the actual quotes from the reel — the quote IS the hook
+2. TikTok caption: the hook quote only (max 150 chars). No hashtags in caption.
+3. Instagram: hook quote as first line, 2 lines expanding the theme, "Save this." as CTA
+4. YouTube Shorts title: the hook quote (max 60 chars), no brand name
+5. Facebook: hook quote + one reflective question to drive comments
+6. All captions must feel like they belong on a @theapollomethod or @vo1dm1nd post
+7. No quotation marks around the quote — it should read as a statement
+
+OUTPUT: Respond with ONLY valid JSON — no markdown fences.
+
+{{
+  "youtube": {{
+    "title": "Hook quote as title, max 60 chars",
+    "description": "2-3 lines: hook quote, brief expansion, subscribe CTA",
+    "tags": ["15-20 tags: quote keywords + motivation + dark psychology"]
+  }},
+  "tiktok": {{
+    "caption": "The hook quote only. Max 150 chars.",
+    "hashtags": ["12-15 hashtags: fyp + quote niche + dark motivation"]
+  }},
+  "instagram": {{
+    "caption": "Hook quote\\n\\n2 lines expanding the theme\\n\\nSave this.",
+    "hashtags": ["15-20 hashtags: quote niche + dark motivation + trending"]
+  }},
+  "facebook": {{
+    "description": "Hook quote + one reflective question",
+    "hashtags": ["3-5 hashtags only"]
+  }}
+}}"""
+
+    try:
+        if _USING_NEW_SDK:
+            client = genai.Client(api_key=config.GEMINI_API_KEY)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=prompt,
+            )
+            raw = response.text.strip()
+        else:
+            genai.configure(api_key=config.GEMINI_API_KEY)
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            response = model.generate_content(prompt)
+            raw = response.text.strip()
+
+        if raw.startswith("```"):
+            raw = "\n".join(raw.split("\n")[1:])
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+
+        metadata = json.loads(raw)
+        print(f"[METADATA] Generated quote reel captions via Gemini")
+        return metadata
+
+    except Exception as e:
+        print(f"[METADATA] Gemini reel caption error: {e}")
+        return None
+
+
+def _reel_fallback(topic, quotes, hook, topic_tag):
+    """
+    # Template-based fallback captions for quote reels.
+    # Uses the actual quotes — never generic filler.
+    """
+    # --- TikTok: hook quote + trending/niche hashtags ---
+    tiktok_hashtags = (
+        REEL_HASHTAGS_TRENDING[:3]
+        + REEL_HASHTAGS_QUOTE[:7]
+        + REEL_HASHTAGS_DARK[:5]
+    )
+
+    # --- Instagram: broader hashtag mix ---
+    instagram_hashtags = (
+        REEL_HASHTAGS_QUOTE
+        + REEL_HASHTAGS_DARK[:7]
+        + [topic_tag, "reels", "instareels", "explorepage", "viral"]
+    )
+
+    # --- YouTube: SEO tags ---
+    youtube_tags = (
+        [topic_tag, "quotes", "motivation", "dark motivation"]
+        + REEL_HASHTAGS_QUOTE[:5]
+        + REEL_HASHTAGS_DARK[:5]
+        + ["stoic philosophy", "self mastery", "discipline quotes",
+           "mindset quotes", "quote reel", "luminous will"]
+    )
+
+    # --- Pick a second quote for variety in longer captions ---
+    second = quotes[1] if len(quotes) > 1 else quotes[0]
+
+    return {
+        "youtube": {
+            "title": hook[:60],
+            "description": (
+                f"{hook}\n\n"
+                f"Dark motivation for the disciplined mind. "
+                f"These aren't feel-good quotes — they're wake-up calls.\n\n"
+                f"Subscribe for daily quote reels.\n"
+                f"#darkmotivation #stoicquotes #luminouswill"
+            ),
+            "tags": youtube_tags,
+            "category": "Education",
+        },
+
+        "tiktok": {
+            "caption": hook[:150],
+            "hashtags": tiktok_hashtags,
+        },
+
+        "instagram": {
+            "caption": (
+                f"{hook}\n\n"
+                f"{second}\n\n"
+                f"Which one hit harder? Save this for when you need it."
+            ),
+            "hashtags": instagram_hashtags,
+        },
+
+        "facebook": {
+            "description": (
+                f"{hook}\n\n"
+                f"Which line do you need to hear right now?\n\n"
+                f"#darkmotivation #quotes #mindset"
+            ),
+            "hashtags": ["darkmotivation", "quotes", "mindset"],
+        },
+    }

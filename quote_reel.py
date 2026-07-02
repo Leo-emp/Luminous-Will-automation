@@ -4,6 +4,12 @@ import textwrap
 import numpy as np
 import config
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from ai_quote_gen import (
+    AI_SCENE_STYLES, AI_BG_STYLES, ALL_AI_STYLES,
+    render_ai_scene_image, render_ai_bg_with_text,
+    render_ai_bg_progressive, apply_post_processing,
+    render_dynamic_image, render_dynamic_progressive,
+)
 
 # ============================================================
 # QUOTE REEL GENERATOR
@@ -306,6 +312,98 @@ QUOTE_STYLES = {
         "shadow": True,
         "strikethrough": True,
         "bg_darken": 0.55,
+    },
+    # ============================================================
+    # NEW STYLES — identified from TikTok quote reel reference images
+    # (Drive folder: "TikTok quote reel images", 61 references)
+    # ============================================================
+    "divider": {
+        # Two-part quote split by horizontal rule — ref: IMG_5129 "NO ONE CARES. — WORK HARDER."
+        # Also ref: IMG_5133 "DO IT TIRED. — DO IT ANYWAY.", IMG_5155 "SMALL STEPS. BIG RESULTS."
+        # Huge condensed caps, horizontal line between the two halves, subway poster aesthetic
+        "font_key": "anton",
+        "base_font_size": 120,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": True,
+        "line_spacing_ratio": 1.3,
+        "split_on_sentences": True,
+        "shadow": True,
+        "divider_line": True,       # draws a horizontal rule between sentence groups
+        "bg_darken": 0.45,
+    },
+    "gradient_fade": {
+        # Gray-to-white text progression — ref: IMG_5143 "PROGRESS OVER COMFORT."
+        # Earlier words in muted gray, final keyword in bright white = emphasis
+        # Pure black background, massive wide text, left-aligned, lower-third position
+        "font_key": "montserrat",
+        "base_font_size": 150,
+        "text_color": (255, 255, 255),  # base color (used for last line)
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": True,
+        "line_spacing_ratio": 1.05,
+        "split_per_word": True,
+        "shadow": False,
+        "gradient_text": True,      # each line gets progressively brighter
+        "force_plain_bg": True,
+        "plain_color": (5, 5, 5),
+        "vertical_position": "lower",
+    },
+    "echo_repeat": {
+        # Same phrase repeated with opacity gradient — ref: IMG_5165 "FOCUS ON THE MISSION" x7
+        # Center line is full white, lines above/below fade to dark gray
+        # Wire-frame/abstract art aesthetic, monospace feel
+        "font_key": "montserrat",
+        "base_font_size": 36,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": True,
+        "line_spacing_ratio": 1.6,
+        "split_on_sentences": False,
+        "shadow": False,
+        "echo_repeat": True,        # repeats text 7x with fading opacity
+        "echo_count": 7,            # number of repetitions
+        "force_plain_bg": True,
+        "plain_color": (8, 8, 8),
+    },
+    "poster": {
+        # Three-tier hierarchy — ref: IMG_5136 "CONSISTENCY / Do it, Do it tired.../ footnote"
+        # Small spaced header keyword at top + large bold body + tiny subtitle at bottom
+        # Framed poster on dark background, premium typography
+        "font_key": "oswald",
+        "base_font_size": 90,
+        "text_color": (255, 255, 255),
+        "highlight_color": None,
+        "alignment": "left",
+        "uppercase": False,
+        "line_spacing_ratio": 1.3,
+        "split_on_sentences": True,
+        "shadow": False,
+        "poster_layout": True,      # enables 3-tier rendering (header/body/footer)
+        "force_plain_bg": True,
+        "plain_color": (12, 12, 12),
+    },
+    "dual_weight": {
+        # Large accent keyword + smaller subtitle — ref: IMG_5151 "MINDSET IS EVERYTHING"
+        # First 1-2 words massive in gold/accent, rest smaller underneath
+        # Dark cinematic background, editorial hierarchy
+        "font_key": "bebas",
+        "base_font_size": 160,
+        "text_color": (220, 195, 120),  # warm gold for the big keyword
+        "highlight_color": None,
+        "alignment": "center",
+        "uppercase": True,
+        "line_spacing_ratio": 1.4,
+        "split_on_sentences": False,
+        "shadow": False,
+        "dual_weight": True,        # splits into big keyword + smaller subtitle
+        "subtitle_color": (200, 200, 200),  # lighter gray for subtitle
+        "subtitle_font_key": "montserrat",
+        "subtitle_size_ratio": 0.35,  # subtitle is 35% of main keyword size
+        "bg_darken": 0.50,
     },
 }
 
@@ -667,8 +765,14 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
     line_spacing = int(ref_h * style["line_spacing_ratio"])
     total_text_height = line_spacing * len(lines)
 
-    # --- Vertically center the text block ---
-    start_y = (target_h - total_text_height) // 2
+    # --- Vertical position: center (default), lower, or upper ---
+    vpos = style.get("vertical_position", "center")
+    if vpos == "lower":
+        start_y = int(target_h * 0.52)
+    elif vpos == "upper":
+        start_y = int(target_h * 0.15)
+    else:
+        start_y = (target_h - total_text_height) // 2
 
     # --- Glow effect: additive light behind text for backlit 3D look ---
     if style.get("glow"):
@@ -704,116 +808,261 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
         bg = Image.fromarray(bg_arr)
         draw = ImageDraw.Draw(bg)
 
-    for i, line in enumerate(lines):
-        lw, lh = line_metrics[i]
-        y = start_y + (i * line_spacing)
+    # ============================================================
+    # SPECIAL RENDERERS — these styles bypass or extend the standard text loop
+    # ============================================================
 
-        # --- Horizontal position (clamped to safe zone) ---
-        if style["alignment"] == "center":
-            x = (target_w - lw) // 2
-        elif style["alignment"] == "left":
-            x = margin_x
-        else:
-            x = target_w - lw - margin_x
+    # --- Echo repeat: same phrase stacked 7x with opacity gradient ---
+    # Ref: IMG_5165 "FOCUS ON THE MISSION" repeated, center line bright white
+    if style.get("echo_repeat"):
+        echo_count = style.get("echo_count", 7)
+        # --- Use the full quote as a single line ---
+        echo_text = text
+        echo_bbox = draw.textbbox((0, 0), echo_text, font=font)
+        echo_w = echo_bbox[2] - echo_bbox[0]
+        echo_h = echo_bbox[3] - echo_bbox[1]
+        echo_spacing = int(echo_h * style["line_spacing_ratio"])
+        total_echo_h = echo_spacing * echo_count
+        echo_start_y = (target_h - total_echo_h) // 2
+        center_idx = echo_count // 2  # middle line = brightest
 
-        # --- Clamp x so text + width stays inside safe zone ---
-        x = max(margin_x, min(x, target_w - margin_x - lw))
+        for ei in range(echo_count):
+            # --- Brightness fades away from center: center=255, edges=40 ---
+            dist_from_center = abs(ei - center_idx)
+            brightness = max(40, 255 - dist_from_center * 55)
+            echo_color = (brightness, brightness, brightness)
+            ey = echo_start_y + (ei * echo_spacing)
+            ex = (target_w - echo_w) // 2
+            ex = max(margin_x, min(ex, target_w - margin_x - echo_w))
+            draw.text((ex, ey), echo_text, font=font, fill=echo_color)
 
-        # --- Draw marker highlight behind text (realistic, semi-transparent) ---
-        if style.get("highlight_color"):
-            pad_x = style.get("highlight_padding_x", 16)
-            pad_y = style.get("highlight_padding_y", 12)
-            rect_x1 = max(0, x - pad_x)
-            rect_y1 = y - pad_y
-            rect_x2 = min(target_w, x + lw + pad_x)
-            rect_y2 = y + lh + pad_y + 4
+        # --- Skip the standard text loop entirely ---
+        # (jump straight to brackets/save section below)
 
-            # --- Create semi-transparent highlight overlay (like real marker) ---
-            highlight_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
-            h_draw = ImageDraw.Draw(highlight_layer)
+    # --- Poster layout: 3-tier hierarchy (header / body / footnote) ---
+    # Ref: IMG_5136 "CONSISTENCY / Do it, Do it tired.../ footnote"
+    elif style.get("poster_layout"):
+        # --- Split into sentences for the body, use first word as header ---
+        words = quote_text.split()
+        # --- Header = first word (displayed in small letter-spaced caps) ---
+        header_text = words[0].upper() if words else text
+        # --- Body = full quote (displayed large, sentence-split) ---
+        body_text = text
+        # --- Footer = small subtitle below (use last sentence or tagline) ---
+        sentences = [s.strip() for s in quote_text.replace("!", ".").replace("?", ".").split(".") if s.strip()]
+        footer_text = sentences[-1].strip() if len(sentences) > 1 else ""
 
-            # --- Draw main highlight bar with transparency ---
-            h_color = style["highlight_color"] + (200,)
-            h_draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=h_color)
+        # --- Header: small spaced caps at top ---
+        header_size = max(24, font_size // 4)
+        header_font = ImageFont.truetype(font_path, header_size)
+        # --- Add letter spacing by inserting spaces between chars ---
+        spaced_header = "   ".join(list(header_text))
+        hbbox = draw.textbbox((0, 0), spaced_header, font=header_font)
+        hw = hbbox[2] - hbbox[0]
+        header_x = margin_x
+        header_y = margin_y + 40
+        header_color = (180, 180, 180)
+        draw.text((header_x, header_y), spaced_header, font=header_font, fill=header_color)
 
-            # --- Add rough edges (random jitter on top/bottom borders) ---
-            for rx in range(rect_x1, rect_x2, 3):
-                jitter_top = random.randint(-2, 3)
-                jitter_bot = random.randint(-2, 3)
-                if jitter_top != 0:
-                    edge_color = style["highlight_color"] + (random.randint(80, 150),)
-                    h_draw.rectangle([rx, rect_y1 + jitter_top - 2, rx + 3, rect_y1 + 1],
-                                     fill=edge_color)
-                if jitter_bot != 0:
-                    edge_color = style["highlight_color"] + (random.randint(80, 150),)
-                    h_draw.rectangle([rx, rect_y2 - 1, rx + 3, rect_y2 + jitter_bot + 2],
-                                     fill=edge_color)
+        # --- Body: large text below header ---
+        body_start_y = header_y + header_size + 60
+        for i, line in enumerate(lines):
+            lw, lh = line_metrics[i]
+            by = body_start_y + (i * line_spacing)
+            bx = margin_x
+            bx = max(margin_x, min(bx, target_w - margin_x - lw))
+            draw.text((bx, by), line, font=font, fill=text_color_active)
 
-            # --- Composite highlight onto background ---
-            bg = Image.alpha_composite(bg.convert("RGBA"), highlight_layer).convert("RGB")
-            draw = ImageDraw.Draw(bg)
+        # --- Footer: small text at bottom ---
+        if footer_text:
+            footer_size = max(20, font_size // 4)
+            footer_font = ImageFont.truetype(font_path, footer_size)
+            footer_display = footer_text if not style.get("uppercase") else footer_text
+            fbbox = draw.textbbox((0, 0), footer_display, font=footer_font)
+            fw = fbbox[2] - fbbox[0]
+            # --- Small horizontal rule above footer ---
+            body_bottom = body_start_y + (len(lines) * line_spacing) + 20
+            draw.line([(margin_x, body_bottom), (margin_x + 40, body_bottom)],
+                      fill=(120, 120, 120), width=2)
+            draw.text((margin_x, body_bottom + 15), footer_display,
+                      font=footer_font, fill=(150, 150, 150))
 
-        # --- Draw text shadow (skip on plain light backgrounds — looks dirty) ---
-        if style.get("shadow") and bg_type != "plain":
-            shadow_offset = max(3, font_size // 20)
-            for sx in range(1, shadow_offset + 1):
-                draw.text((x + sx, y + sx), line, font=font, fill=(0, 0, 0))
+    # --- Dual weight: big keyword + smaller subtitle ---
+    # Ref: IMG_5151 "MINDSET IS EVERYTHING" (gold large + gray subtitle)
+    elif style.get("dual_weight"):
+        words = text.split()
+        # --- Split: first 1-2 words = keyword, rest = subtitle ---
+        split_at = 1 if len(words) <= 3 else 2
+        keyword = " ".join(words[:split_at])
+        subtitle = " ".join(words[split_at:])
 
-        # --- Draw spray paint effect (realistic graffiti on walls) ---
-        if style.get("spray_paint"):
-            spray_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
-            spray_draw = ImageDraw.Draw(spray_layer)
-            # --- Draw main text with rough edges via jittered offsets ---
-            for dx in range(-2, 3):
-                for dy in range(-2, 3):
-                    alpha = 255 if abs(dx) <= 1 and abs(dy) <= 1 else random.randint(100, 200)
-                    spray_draw.text((x + dx, y + dy), line, font=font,
-                                    fill=text_color_active + (alpha,))
-            # --- Wide overspray cloud around text (big radius, low density) ---
-            for cx in range(x - 25, x + lw + 25, 4):
-                for cy in range(y - 20, y + lh + 20, 4):
-                    dist_x = 0 if x <= cx <= x + lw else min(abs(cx - x), abs(cx - x - lw))
-                    dist_y = 0 if y <= cy <= y + lh else min(abs(cy - y), abs(cy - y - lh))
-                    dist = max(dist_x, dist_y)
-                    # --- Closer to text = more dots, farther = fewer ---
-                    spray_prob = 0.25 if dist < 5 else (0.08 if dist < 15 else 0.03)
-                    if random.random() < spray_prob:
-                        dot_x = cx + random.randint(-6, 6)
-                        dot_y = cy + random.randint(-6, 6)
-                        dot_alpha = random.randint(30, 180)
-                        dot_size = random.randint(1, 4)
-                        spray_draw.ellipse(
-                            [dot_x, dot_y, dot_x + dot_size, dot_y + dot_size],
-                            fill=text_color_active + (dot_alpha,))
-            # --- Paint drips below random letters ---
-            if random.random() < 0.6:
-                num_drips = random.randint(1, 3)
-                for _ in range(num_drips):
-                    drip_x = x + random.randint(5, max(6, lw - 5))
-                    drip_y = y + lh + random.randint(0, 5)
-                    drip_len = random.randint(20, 60)
-                    drip_width = random.randint(2, 4)
-                    for dy_drip in range(drip_len):
-                        alpha = max(15, 220 - dy_drip * 4)
-                        drip_x_wobble = drip_x + random.randint(-1, 1)
-                        spray_draw.rectangle(
-                            [drip_x_wobble, drip_y + dy_drip,
-                             drip_x_wobble + drip_width, drip_y + dy_drip + 1],
-                            fill=text_color_active + (alpha,))
-            bg = Image.alpha_composite(bg.convert("RGBA"), spray_layer).convert("RGB")
-            draw = ImageDraw.Draw(bg)
-        else:
-            # --- Draw main text ---
-            draw.text((x, y), line, font=font, fill=text_color_active)
+        # --- Keyword: massive font ---
+        kbbox = draw.textbbox((0, 0), keyword, font=font)
+        kw = kbbox[2] - kbbox[0]
+        kh = kbbox[3] - kbbox[1]
 
-        # --- Strikethrough: draw line through first sentence, keep second clean ---
-        if style.get("strikethrough") and i == 0:
-            strike_y = y + lh // 2
-            strike_color = (180, 40, 40)
-            draw.line([(x - 10, strike_y), (x + lw + 10, strike_y)],
-                      fill=strike_color, width=max(4, font_size // 18))
-            draw.line([(x - 10, strike_y + 2), (x + lw + 10, strike_y + 2)],
-                      fill=strike_color, width=max(3, font_size // 22))
+        # --- Subtitle: smaller font ---
+        sub_size = max(30, int(font_size * style.get("subtitle_size_ratio", 0.35)))
+        sub_font_key = style.get("subtitle_font_key", "montserrat")
+        sub_font_path = FONT_FILES.get(sub_font_key, FONT_FILES["montserrat"])
+        sub_font = ImageFont.truetype(sub_font_path, sub_size)
+        sub_color = style.get("subtitle_color", (200, 200, 200))
+        sbbox = draw.textbbox((0, 0), subtitle, font=sub_font)
+        sw = sbbox[2] - sbbox[0]
+        sh = sbbox[3] - sbbox[1]
+
+        # --- Vertically center the keyword+subtitle block ---
+        gap = 30
+        total_block_h = kh + gap + sh
+        block_start_y = (target_h - total_block_h) // 2
+
+        # --- Draw keyword (centered) ---
+        kx = (target_w - kw) // 2
+        kx = max(margin_x, min(kx, target_w - margin_x - kw))
+        draw.text((kx, block_start_y), keyword, font=font, fill=text_color_active)
+
+        # --- Draw subtitle (centered below keyword) ---
+        sx = (target_w - sw) // 2
+        sx = max(margin_x, min(sx, target_w - margin_x - sw))
+        draw.text((sx, block_start_y + kh + gap), subtitle, font=sub_font, fill=sub_color)
+
+    # --- Standard text loop (for all other styles including divider + gradient_fade) ---
+    else:
+        for i, line in enumerate(lines):
+            lw, lh = line_metrics[i]
+            y = start_y + (i * line_spacing)
+
+            # --- Horizontal position (clamped to safe zone) ---
+            if style["alignment"] == "center":
+                x = (target_w - lw) // 2
+            elif style["alignment"] == "left":
+                x = margin_x
+            else:
+                x = target_w - lw - margin_x
+
+            # --- Clamp x so text + width stays inside safe zone ---
+            x = max(margin_x, min(x, target_w - margin_x - lw))
+
+            # --- Draw marker highlight behind text (realistic, semi-transparent) ---
+            if style.get("highlight_color"):
+                pad_x = style.get("highlight_padding_x", 16)
+                pad_y = style.get("highlight_padding_y", 12)
+                rect_x1 = max(0, x - pad_x)
+                rect_y1 = y - pad_y
+                rect_x2 = min(target_w, x + lw + pad_x)
+                rect_y2 = y + lh + pad_y + 4
+
+                # --- Create semi-transparent highlight overlay (like real marker) ---
+                highlight_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+                h_draw = ImageDraw.Draw(highlight_layer)
+
+                # --- Draw main highlight bar with transparency ---
+                h_color = style["highlight_color"] + (200,)
+                h_draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2], fill=h_color)
+
+                # --- Add rough edges (random jitter on top/bottom borders) ---
+                for rx in range(rect_x1, rect_x2, 3):
+                    jitter_top = random.randint(-2, 3)
+                    jitter_bot = random.randint(-2, 3)
+                    if jitter_top != 0:
+                        edge_color = style["highlight_color"] + (random.randint(80, 150),)
+                        h_draw.rectangle([rx, rect_y1 + jitter_top - 2, rx + 3, rect_y1 + 1],
+                                         fill=edge_color)
+                    if jitter_bot != 0:
+                        edge_color = style["highlight_color"] + (random.randint(80, 150),)
+                        h_draw.rectangle([rx, rect_y2 - 1, rx + 3, rect_y2 + jitter_bot + 2],
+                                         fill=edge_color)
+
+                # --- Composite highlight onto background ---
+                bg = Image.alpha_composite(bg.convert("RGBA"), highlight_layer).convert("RGB")
+                draw = ImageDraw.Draw(bg)
+
+            # --- Draw text shadow (skip on plain light backgrounds — looks dirty) ---
+            if style.get("shadow") and bg_type != "plain":
+                shadow_offset = max(3, font_size // 20)
+                for sx in range(1, shadow_offset + 1):
+                    draw.text((x + sx, y + sx), line, font=font, fill=(0, 0, 0))
+
+            # --- Draw spray paint effect (realistic graffiti on walls) ---
+            if style.get("spray_paint"):
+                spray_layer = Image.new("RGBA", bg.size, (0, 0, 0, 0))
+                spray_draw = ImageDraw.Draw(spray_layer)
+                # --- Draw main text with rough edges via jittered offsets ---
+                for dx in range(-2, 3):
+                    for dy in range(-2, 3):
+                        alpha = 255 if abs(dx) <= 1 and abs(dy) <= 1 else random.randint(100, 200)
+                        spray_draw.text((x + dx, y + dy), line, font=font,
+                                        fill=text_color_active + (alpha,))
+                # --- Wide overspray cloud around text (big radius, low density) ---
+                for cx in range(x - 25, x + lw + 25, 4):
+                    for cy in range(y - 20, y + lh + 20, 4):
+                        dist_x = 0 if x <= cx <= x + lw else min(abs(cx - x), abs(cx - x - lw))
+                        dist_y = 0 if y <= cy <= y + lh else min(abs(cy - y), abs(cy - y - lh))
+                        dist = max(dist_x, dist_y)
+                        # --- Closer to text = more dots, farther = fewer ---
+                        spray_prob = 0.25 if dist < 5 else (0.08 if dist < 15 else 0.03)
+                        if random.random() < spray_prob:
+                            dot_x = cx + random.randint(-6, 6)
+                            dot_y = cy + random.randint(-6, 6)
+                            dot_alpha = random.randint(30, 180)
+                            dot_size = random.randint(1, 4)
+                            spray_draw.ellipse(
+                                [dot_x, dot_y, dot_x + dot_size, dot_y + dot_size],
+                                fill=text_color_active + (dot_alpha,))
+                # --- Paint drips below random letters ---
+                if random.random() < 0.6:
+                    num_drips = random.randint(1, 3)
+                    for _ in range(num_drips):
+                        drip_x = x + random.randint(5, max(6, lw - 5))
+                        drip_y = y + lh + random.randint(0, 5)
+                        drip_len = random.randint(20, 60)
+                        drip_width = random.randint(2, 4)
+                        for dy_drip in range(drip_len):
+                            alpha = max(15, 220 - dy_drip * 4)
+                            drip_x_wobble = drip_x + random.randint(-1, 1)
+                            spray_draw.rectangle(
+                                [drip_x_wobble, drip_y + dy_drip,
+                                 drip_x_wobble + drip_width, drip_y + dy_drip + 1],
+                                fill=text_color_active + (alpha,))
+                bg = Image.alpha_composite(bg.convert("RGBA"), spray_layer).convert("RGB")
+                draw = ImageDraw.Draw(bg)
+
+            # --- Gradient fade: each line gets progressively brighter ---
+            # Ref: IMG_5143 "PROGRESS OVER COMFORT." (gray→white per line)
+            elif style.get("gradient_text"):
+                num_lines = len(lines)
+                # --- Line 0 = darkest gray, last line = full white ---
+                if num_lines > 1:
+                    brightness = int(80 + (175 * i / (num_lines - 1)))
+                else:
+                    brightness = 255
+                grad_color = (brightness, brightness, brightness)
+                draw.text((x, y), line, font=font, fill=grad_color)
+
+            else:
+                # --- Draw main text ---
+                draw.text((x, y), line, font=font, fill=text_color_active)
+
+            # --- Strikethrough: draw line through first sentence, keep second clean ---
+            if style.get("strikethrough") and i == 0:
+                strike_y = y + lh // 2
+                strike_color = (180, 40, 40)
+                draw.line([(x - 10, strike_y), (x + lw + 10, strike_y)],
+                          fill=strike_color, width=max(4, font_size // 18))
+                draw.line([(x - 10, strike_y + 2), (x + lw + 10, strike_y + 2)],
+                          fill=strike_color, width=max(3, font_size // 22))
+
+            # --- Divider line: horizontal rule between sentence halves ---
+            # Ref: IMG_5129 "NO ONE CARES. ——— WORK HARDER."
+            if style.get("divider_line") and style.get("split_on_sentences"):
+                # --- Draw the divider after the midpoint of the lines ---
+                midpoint = len(lines) // 2
+                if i == midpoint - 1 and len(lines) >= 2:
+                    rule_y = y + lh + (line_spacing - lh) // 2
+                    rule_x1 = margin_x
+                    rule_x2 = margin_x + min(200, max_text_width // 3)
+                    draw.line([(rule_x1, rule_y), (rule_x2, rule_y)],
+                              fill=(255, 255, 255), width=3)
 
     # --- Draw bracket frame around text block if style has brackets ---
     if style.get("brackets"):
@@ -850,6 +1099,16 @@ def render_quote_image(quote_text, bg_image_path, style_name=None, output_path=N
                   fill=bracket_color, width=bracket_thickness)
         draw.line([(block_right - bracket_len, block_bottom), (block_right, block_bottom)],
                   fill=bracket_color, width=bracket_thickness)
+
+    # --- Post-processing: grain + vignette to match reference aesthetic ---
+    # Pillow-rendered images get lighter grain than AI scenes (they're already clean)
+    grain = 8 if bg_type == "plain" else 12
+    vignette = 0.25 if bg_type == "plain" else 0.35
+    desat = 0.0 if bg_type == "plain" else 0.15
+    bg = apply_post_processing(bg, grain_amount=grain,
+                               vignette_strength=vignette,
+                               desaturate_amount=desat,
+                               grade_name="cold_noir")
 
     # --- Save ---
     if not output_path:
@@ -904,62 +1163,142 @@ def detect_beats(audio_path):
     return beat_times.tolist()
 
 
-def _assign_zoom_types(bg_types):
+def _assign_zoom_types(audio_path, segments, beat_times):
     """
-    # Assigns a zoom effect to each slide based on its background type
-    # Returns list of zoom type strings
+    # Selects zoom type per slide based on audio energy at that moment.
+    # Analyzes onset strength envelope and maps intensity to zoom:
+    #   punch_zoom  — high energy drops (top 25%), snap 1.0→1.08 on beat
+    #   slow_zoom   — medium energy (25-55%), smooth 1.0→1.08 over duration
+    #   subtle_zoom — low energy (55-80%), smooth 1.0→1.03-1.05
+    #   static      — quiet moments (bottom 20%), no movement
     #
-    # Rules (matched from viral quote reel patterns):
-    #   - plain backgrounds: mostly "static" (clean, no distraction)
-    #   - epic backgrounds: "slow_zoom" or "punch_zoom" (show off the art)
-    #   - urban backgrounds: "slow_zoom" or "punch_zoom" (add energy)
-    #   - At least 1 slide must have punch_zoom for impact
-    #   - At least 1 slide must be static for contrast
+    # Different tracks with different beats = different zoom patterns.
     """
-    # --- Apollo Method finding: NEVER truly static. Always slow zoom. ---
-    zoom_map = {
-        "plain": ["slow_zoom", "slow_zoom", "slow_zoom"],
-        "urban": ["slow_zoom", "punch_zoom", "slow_zoom"],
-        "epic": ["slow_zoom", "punch_zoom", "slow_zoom", "punch_zoom"],
-    }
+    import librosa
 
+    y, sr = librosa.load(audio_path, sr=22050)
+    onset_env = librosa.onset.onset_strength(y=y, sr=sr)
+    times = librosa.times_like(onset_env, sr=sr)
+
+    # --- Measure average energy per slide segment ---
+    energies = []
+    for start, end in segments:
+        mask = (times >= start) & (times < end)
+        if mask.any():
+            energies.append(float(onset_env[mask].mean()))
+        else:
+            energies.append(0.0)
+
+    # --- Normalize to 0-1 range ---
+    e_min = min(energies) if energies else 0
+    e_max = max(energies) if energies else 1
+    e_range = e_max - e_min if e_max > e_min else 1.0
+    normed = [(e - e_min) / e_range for e in energies]
+
+    # --- Map energy to zoom type ---
     zooms = []
-    for bg_type in bg_types:
-        pool = zoom_map.get(bg_type, ["slow_zoom"])
-        zooms.append(random.choice(pool))
+    for i, energy in enumerate(normed):
+        if energy >= 0.75:
+            zooms.append("punch_zoom")
+        elif energy >= 0.45:
+            zooms.append("slow_zoom")
+        elif energy >= 0.20:
+            zooms.append("subtle_zoom")
+        else:
+            zooms.append("static")
 
-    # --- Guarantee at least 1 punch_zoom for impact ---
-    if "punch_zoom" not in zooms:
-        for i, bg in enumerate(bg_types):
-            if bg != "plain":
-                zooms[i] = "punch_zoom"
-                break
+    # --- Opening hook always gets slow_zoom (sets the tone) ---
+    if zooms:
+        zooms[0] = "slow_zoom"
+    # --- Closing hold: subtle or static (wind down) ---
+    if len(zooms) > 1:
+        if zooms[-1] == "punch_zoom":
+            zooms[-1] = "subtle_zoom"
+
+    print(f"[QUOTE_REEL] Zoom assignment (energy-adaptive):")
+    for i, (z, e) in enumerate(zip(zooms, normed)):
+        print(f"  Slide {i+1}: {z} (energy: {e:.2f})")
 
     return zooms
+
+
+def _map_slides_to_beats(beat_times, num_slides, total_duration):
+    """
+    # Maps slides to beat boundaries with three-act structure:
+    #   Opening (slide 1): ~25% of beats (3-7s hook that lingers)
+    #   Middle slides: 1-3 beats each (rapid-fire, beat-synced)
+    #   Closing (last slide): ~20% of beats (3-5s CTA hold)
+    # Every slide transition lands exactly on a detected beat.
+    # Returns list of (start_time, end_time) per slide.
+    """
+    n_beats = len(beat_times)
+
+    # --- Fallback: not enough beats or only 1 slide ---
+    if n_beats < 4 or num_slides <= 1:
+        dur = total_duration / max(1, num_slides)
+        return [(i * dur, min((i + 1) * dur, total_duration))
+                for i in range(num_slides)]
+
+    # --- Three-act beat allocation ---
+    open_count = max(3, min(14, round(n_beats * 0.25)))
+    close_count = max(3, min(12, round(n_beats * 0.20)))
+    middle_total = n_beats - open_count - close_count
+    middle_slides = max(0, num_slides - 2)
+
+    # --- Shrink opening/closing if middle doesn't have enough beats ---
+    while middle_total < middle_slides and (open_count > 2 or close_count > 2):
+        if open_count > close_count:
+            open_count -= 1
+        else:
+            close_count -= 1
+        middle_total = n_beats - open_count - close_count
+
+    # --- Only 2 slides: split at midpoint beat ---
+    if middle_slides == 0:
+        mid = n_beats // 2
+        return [(0.0, beat_times[mid]), (beat_times[mid], total_duration)]
+
+    # --- Distribute middle beats evenly, extras to earlier slides ---
+    base = middle_total // middle_slides
+    extra = middle_total % middle_slides
+    per_slide = [base + (1 if i < extra else 0) for i in range(middle_slides)]
+
+    # --- Build segments from beat indices ---
+    segments = []
+    cursor = min(open_count, n_beats - 1)
+    segments.append((0.0, beat_times[cursor]))
+
+    for beats_n in per_slide:
+        start_t = beat_times[cursor]
+        cursor = min(cursor + max(1, beats_n), n_beats - 1)
+        segments.append((start_t, beat_times[cursor]))
+
+    # --- Closing: last beat boundary to end of audio ---
+    segments.append((beat_times[cursor], total_duration))
+
+    return segments
 
 
 def assemble_quote_reel(quote_images, audio_path, output_path,
                         duration=None, bg_types=None):
     """
-    # Assembles quote images + audio into a video with 3 zoom effects:
+    # Beat-adaptive video assembler (matched from 6 TikTok reference reels).
     #
-    #   static     — no zoom, clean and still (plain backgrounds)
-    #   slow_zoom  — gentle 1.0→1.12 zoom over the slide duration
-    #   punch_zoom — fast 1.0→1.15 snap zoom on first beat, holds
+    # Slide timing syncs to detected beats with three-act structure:
+    #   Opening: first slide holds ~25% of beats (3-7s hook)
+    #   Middle: rapid-fire slides, 1-3 beats each (cut on every beat)
+    #   Closing: last slide holds ~20% of beats (3-5s CTA)
     #
-    # Args:
-    #   quote_images: list of rendered quote image paths
-    #   audio_path: path to the beat/music audio file
-    #   output_path: where to save the final .mp4
-    #   duration: target duration in seconds (defaults to audio length)
-    #   bg_types: list of background types per slide (for zoom assignment)
+    # Zoom selected by audio energy per segment (librosa onset_strength):
+    #   punch_zoom (high), slow_zoom (medium), subtle_zoom (low), static (quiet)
+    # 84% of reference cuts land within 71ms of a beat — we match that.
     """
     from moviepy import (
         ImageClip, AudioFileClip, CompositeVideoClip,
         concatenate_videoclips
     )
 
-    print("[QUOTE_REEL] Assembling video with zoom effects...")
+    print("[QUOTE_REEL] Assembling beat-synced video...")
 
     # --- Load audio ---
     audio = AudioFileClip(audio_path)
@@ -967,71 +1306,69 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
         audio = audio.subclipped(0, min(duration, audio.duration))
     total_duration = audio.duration
 
-    # --- Detect beats for punch zoom sync ---
+    # --- Detect beats for slide timing ---
     beat_times = detect_beats(audio_path)
 
-    # --- Assign zoom type per slide ---
-    if not bg_types:
-        bg_types = ["urban"] * len(quote_images)
-    zoom_types = _assign_zoom_types(bg_types)
-
-    # --- Calculate time per image ---
+    # --- Map slides to beat boundaries (three-act structure) ---
     num_images = len(quote_images)
-    time_per_image = total_duration / num_images
+    segments = _map_slides_to_beats(beat_times, num_images, total_duration)
+    zoom_types = _assign_zoom_types(audio_path, segments, beat_times)
 
-    print(f"[QUOTE_REEL] {num_images} slides, {time_per_image:.1f}s each, {total_duration:.1f}s total")
-    for i, (zt, bt) in enumerate(zip(zoom_types, bg_types)):
-        print(f"  Slide {i+1}: {bt} bg, {zt} zoom")
+    print(f"[QUOTE_REEL] {num_images} slides, {total_duration:.1f}s total, {len(beat_times)} beats detected")
+    for i, ((s, e), zt) in enumerate(zip(segments, zoom_types)):
+        print(f"  Slide {i+1}: {s:.2f}s-{e:.2f}s ({e-s:.2f}s) {zt}")
 
     clips = []
     for i, img_entry in enumerate(quote_images):
-        start_time = i * time_per_image
-        end_time = min((i + 1) * time_per_image, total_duration)
-        clip_duration = end_time - start_time
+        start_time, end_time = segments[i]
+        clip_duration = max(0.1, end_time - start_time)
         zoom_type = zoom_types[i]
 
         # --- Check if this is a progressive reveal (list) or static (string) ---
         is_progressive = isinstance(img_entry, list)
         img_path = img_entry[-1] if is_progressive else img_entry
 
-        # --- Find the first beat in this slide's window (for punch zoom) ---
-        first_beat = None
-        for b in beat_times:
-            if start_time <= b < end_time:
-                first_beat = b - start_time
-                break
-
-        # --- Build zoom function based on type ---
-        def make_zoom_func(ztype, dur, beat_t):
-            def zoom_func(t):
-                if ztype == "static":
+        # --- Build zoom function based on audio energy classification ---
+        # --- static: no movement | subtle: 3-5% | slow: ~8% | punch: snap on beat ---
+        def make_zoom_func(ztype, dur, seg_start, bt_list):
+            if ztype == "static":
+                def zoom_func(t):
                     return 1.0
+                return zoom_func
 
-                elif ztype == "slow_zoom":
-                    # --- Smooth zoom from 1.0 to 1.12 over full duration ---
-                    return 1.0 + 0.12 * (t / dur)
+            if ztype == "subtle_zoom":
+                target = random.uniform(1.03, 1.05)
+                def zoom_func(t):
+                    return 1.0 + (target - 1.0) * min(t / dur, 1.0)
+                return zoom_func
 
-                elif ztype == "punch_zoom":
-                    # --- Snap zoom on first beat, then hold ---
-                    if beat_t is not None:
-                        dt = t - beat_t
-                        if dt < 0:
-                            return 1.0
-                        elif dt < 0.15:
-                            # --- Fast snap in (0 to 0.15 over 0.15s) ---
-                            return 1.0 + 0.15 * (dt / 0.15)
-                        else:
-                            return 1.15
-                    else:
-                        # --- No beat found, do snap at start ---
-                        if t < 0.15:
-                            return 1.0 + 0.15 * (t / 0.15)
-                        return 1.15
+            if ztype == "slow_zoom":
+                target = random.uniform(1.06, 1.10)
+                def zoom_func(t):
+                    return 1.0 + (target - 1.0) * min(t / dur, 1.0)
+                return zoom_func
 
-                return 1.0
+            # --- punch_zoom: snap to target on first beat in segment, then hold ---
+            first_beat_offset = 0.0
+            for bt in bt_list:
+                if bt >= seg_start:
+                    first_beat_offset = bt - seg_start
+                    break
+            target = random.uniform(1.06, 1.10)
+            snap_dur = 0.15
+            def zoom_func(t):
+                # --- Before the beat: static ---
+                if t < first_beat_offset:
+                    return 1.0
+                # --- Snap window: rapid zoom in 0.15s ---
+                elapsed = t - first_beat_offset
+                if elapsed < snap_dur:
+                    return 1.0 + (target - 1.0) * (elapsed / snap_dur)
+                # --- After snap: hold at target ---
+                return target
             return zoom_func
 
-        zoom_fn = make_zoom_func(zoom_type, clip_duration, first_beat)
+        zoom_fn = make_zoom_func(zoom_type, clip_duration, start_time, beat_times)
 
         # --- Build the frame function ---
         img = Image.open(img_path)
@@ -1172,46 +1509,84 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     rendered_images = []
     slide_types = []
 
-    # --- Pick text style based on background type ---
-    # Plain = highlight, crimson, or clean_dark
-    # Urban/Epic = rotate through the visual styles
+    # ============================================================
+    # AUTOMATED STYLE SYSTEM
+    #
+    # Primary: Gemini dynamically designs unique scenes per quote
+    #   → AI provider renders the image (fal.ai / Gemini / Imagen 4)
+    #   → Post-processing applies cinematic film look
+    #
+    # Fallback: Pillow typography styles (when AI is unavailable)
+    #   → 19 styles on Pexels backgrounds
+    #
+    # Mix: ~70% AI-generated, ~30% Pillow for visual variety
+    # Word-by-word reveal: 30% chance on any slide
+    # ============================================================
+
+    # --- Track used concepts to enforce variety across the batch ---
+    used_concepts = []
+
+    # --- Pillow fallback pools ---
     non_plain_styles = [
         "minimalist", "bold_caps", "handwritten", "stacked", "editorial",
         "glow", "bracket", "billboard", "moody_serif", "graffiti", "strikethrough",
+        "divider", "dual_weight",
     ]
-    plain_styles = ["highlight", "crimson", "clean_dark"]
-    # --- Shuffle style order for variety across videos ---
+    plain_styles = ["highlight", "crimson", "clean_dark",
+                    "gradient_fade", "echo_repeat", "poster"]
     random.shuffle(non_plain_styles)
     random.shuffle(plain_styles)
     non_plain_idx = 0
     plain_idx = 0
-    last_style = None
 
     for i, quote in enumerate(quotes):
         img_path, bg_type, text_color = quote_bg_data[i]
+
+        # --- Decide: AI (70%) or Pillow (30%) for variety ---
+        use_ai = (i % 10 < 7)
+        # --- Word-by-word reveal: 30% chance on any slide ---
+        use_reveal = random.random() < 0.30
+
+        out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
+
+        if use_ai:
+            print(f"[QUOTE_REEL] Slide {i+1}/{len(quotes)}: AI dynamic")
+
+            if use_reveal:
+                # --- AI background + word-by-word reveal ---
+                frames, concept = render_dynamic_progressive(
+                    quote, config.TEMP_DIR, previous_concepts=used_concepts)
+                if frames:
+                    rendered_images.append(frames)
+                    used_concepts.append(concept)
+                    slide_types.append(("quote", bg_type))
+                    continue
+
+            # --- Standard AI render (scene or bg, Gemini decides) ---
+            rendered, concept = render_dynamic_image(
+                quote, out_path, previous_concepts=used_concepts)
+            if rendered:
+                rendered_images.append(rendered)
+                used_concepts.append(concept)
+                slide_types.append(("quote", bg_type))
+                continue
+
+            # --- AI failed entirely: fall through to Pillow ---
+            print(f"[QUOTE_REEL] AI failed for slide {i+1}, falling back to Pillow")
+
+        # --- Pillow fallback ---
         if bg_type == "plain":
             style = plain_styles[plain_idx % len(plain_styles)]
             plain_idx += 1
         else:
             style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
             non_plain_idx += 1
-        # --- Prevent same style back-to-back ---
-        if style == last_style:
-            if bg_type == "plain":
-                plain_idx += 1
-                style = plain_styles[plain_idx % len(plain_styles)]
-            else:
-                non_plain_idx += 1
-                style = non_plain_styles[non_plain_idx % len(non_plain_styles)]
-        last_style = style
 
-        # --- Word-by-word reveal on ~40% of slides (Apollo Method signature) ---
-        # Only on styles where progressive reveal looks clean
+        print(f"[QUOTE_REEL] Slide {i+1}/{len(quotes)}: Pillow / {style}")
+
         reveal_styles = {"minimalist", "bold_caps", "clean_dark", "moody_serif",
                          "billboard", "editorial", "bracket"}
-        use_reveal = style in reveal_styles and random.random() < 0.4
-
-        if use_reveal:
+        if use_reveal and style in reveal_styles:
             frames = render_progressive_frames(
                 quote, img_path, style_name=style,
                 output_dir=config.TEMP_DIR, bg_type=bg_type,
@@ -1219,7 +1594,6 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
             )
             rendered_images.append(frames)
         else:
-            out_path = os.path.join(config.TEMP_DIR, f"quote_card_{i}.png")
             rendered = render_quote_image(
                 quote, img_path, style_name=style, output_path=out_path,
                 bg_type=bg_type, text_color_override=text_color,
@@ -1341,8 +1715,8 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
 
     # --- Upload to cloud if configured ---
     from blob_storage import upload_pipeline_output
-    from metadata_generator import generate_metadata
-    metadata = generate_metadata(topic, [], "reel")
+    from metadata_generator import generate_reel_metadata
+    metadata = generate_reel_metadata(topic, quotes)
 
     from moviepy import AudioFileClip
     audio_clip = AudioFileClip(beat_path)
@@ -1370,7 +1744,7 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     print(f"  Time: {elapsed:.0f} seconds")
     print("=" * 60 + "\n")
 
-    return output_path
+    return output_path, quotes
 
 
 # --- Quick test ---

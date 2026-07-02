@@ -29,6 +29,11 @@ EPIDEMIC_SOUND_API_KEY = os.getenv("EPIDEMIC_SOUND_API_KEY", "").strip()
 # Set this to enable cloud upload after video generation
 BLOB_READ_WRITE_TOKEN = os.getenv("BLOB_READ_WRITE_TOKEN", "").strip()
 
+# fal.ai: AI image generation for quote reel scene-integrated images
+# Sign up at https://fal.ai — pricing ~$0.01-0.04 per image
+# Required for AI-generated quote images (subway billboards, 3D letters, etc.)
+FAL_KEY = os.getenv("FAL_KEY", "").strip()
+
 # --- Video Format System ---
 # Each format has its own resolution, bitrate, caption style, and search orientation
 class VideoFormat(Enum):

@@ -412,3 +412,160 @@ def _add_text_overlay(img, text):
     draw.text((x, y), text, font=font, fill="white")
 
     return img
+
+
+# ============================================================
+# REEL THUMBNAIL GENERATOR
+# For 9:16 portrait quote reels — uses the best quote slide
+# image instead of extracting a landscape frame from the video.
+# ============================================================
+
+REEL_THUMB_WIDTH = 1080
+REEL_THUMB_HEIGHT = 1920
+
+
+def generate_reel_thumbnail(video_path, title, output_path=None):
+    # Generates a 9:16 portrait thumbnail for a quote reel
+    # Extracts frames from the video, scores them, picks the best
+    # Adds a branded bottom bar with punch line text
+    # Returns path to the saved thumbnail
+
+    if output_path is None:
+        output_path = video_path.replace(".mp4", "_thumb.jpg")
+
+    # --- Extract and score candidate frames (skip first/last 10%) ---
+    clip = VideoFileClip(video_path)
+    duration = clip.duration
+    num_candidates = 20
+
+    best_frame = None
+    best_score = -1
+
+    for i in range(num_candidates):
+        t = duration * (0.1 + 0.8 * (i / (num_candidates - 1)))
+        frame = clip.get_frame(t)
+
+        score = _score_frame(frame)
+        if score > best_score:
+            best_score = score
+            best_frame = frame
+
+    clip.close()
+
+    if best_frame is None:
+        best_frame = np.zeros((REEL_THUMB_HEIGHT, REEL_THUMB_WIDTH, 3), dtype=np.uint8)
+
+    img = Image.fromarray(best_frame)
+
+    # --- Resize to 1080x1920 (center crop if needed) ---
+    img_ratio = img.width / img.height
+    target_ratio = REEL_THUMB_WIDTH / REEL_THUMB_HEIGHT
+    if img_ratio > target_ratio:
+        new_h = REEL_THUMB_HEIGHT
+        new_w = int(new_h * img_ratio)
+    else:
+        new_w = REEL_THUMB_WIDTH
+        new_h = int(new_w / img_ratio)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+    left = (new_w - REEL_THUMB_WIDTH) // 2
+    top = (new_h - REEL_THUMB_HEIGHT) // 2
+    img = img.crop((left, top, left + REEL_THUMB_WIDTH, top + REEL_THUMB_HEIGHT))
+
+    # --- Generate punch line ---
+    punch_line = _generate_punch_line(title)
+
+    # --- Apply reel-specific dark grade ---
+    img = _apply_reel_thumb_grade(img)
+
+    # --- Add text overlay ---
+    img = _add_reel_text_overlay(img, punch_line)
+
+    img = img.convert("RGB")
+    img.save(output_path, "JPEG", quality=95)
+    print(f"[THUMBNAIL] Reel thumbnail saved: {output_path}")
+    return output_path
+
+
+def _apply_reel_thumb_grade(img):
+    # Dark grade optimized for 9:16 reel thumbnails
+    # Heavier bottom gradient since text sits lower on vertical
+    img = img.convert("RGBA")
+
+    # --- Radial vignette (numpy-based for speed) ---
+    arr = np.array(img, dtype=np.float32)
+    h, w = arr.shape[:2]
+    Y, X = np.ogrid[:h, :w]
+    cx, cy = w / 2.0, h / 2.0
+    dist = np.sqrt(((X - cx) / cx) ** 2 + ((Y - cy) / cy) ** 2)
+    vignette_map = np.clip(1.0 - 0.5 * dist ** 1.8, 0.3, 1.0)
+    for c in range(3):
+        arr[:, :, c] *= vignette_map
+    img = Image.fromarray(np.clip(arr, 0, 255).astype(np.uint8)).convert("RGBA")
+
+    # --- Bottom gradient for text readability ---
+    gradient = Image.new("RGBA", (REEL_THUMB_WIDTH, REEL_THUMB_HEIGHT), (0, 0, 0, 0))
+    gdraw = ImageDraw.Draw(gradient)
+    grad_start = REEL_THUMB_HEIGHT - 500
+    for y in range(grad_start, REEL_THUMB_HEIGHT):
+        progress = (y - grad_start) / 500.0
+        alpha = int(progress * 200)
+        gdraw.line([(0, y), (REEL_THUMB_WIDTH, y)], fill=(0, 0, 0, alpha))
+    img = Image.alpha_composite(img, gradient)
+
+    return img
+
+
+def _add_reel_text_overlay(img, text):
+    # Adds punch line text to reel thumbnail — large, centered, bottom third
+    draw = ImageDraw.Draw(img)
+
+    font_size = 96
+    font = None
+    if os.path.exists(config.CAPTION_FONT_FILE):
+        try:
+            font = ImageFont.truetype(config.CAPTION_FONT_FILE, font_size)
+        except OSError:
+            pass
+    if font is None:
+        try:
+            font = ImageFont.truetype("arialbd.ttf", font_size)
+        except OSError:
+            font = ImageFont.load_default()
+
+    text_width = draw.textlength(text, font=font)
+    x = int((REEL_THUMB_WIDTH - text_width) // 2)
+    y = REEL_THUMB_HEIGHT - 250
+
+    # --- Black stroke ---
+    stroke = 5
+    for dx in range(-stroke, stroke + 1):
+        for dy in range(-stroke, stroke + 1):
+            if dx != 0 or dy != 0:
+                draw.text((x + dx, y + dy), text, font=font, fill="black")
+
+    # --- Amber glow ---
+    glow_font = font
+    if os.path.exists(config.CAPTION_FONT_FILE):
+        try:
+            glow_font = ImageFont.truetype(config.CAPTION_FONT_FILE, font_size + 2)
+        except OSError:
+            pass
+    for dx in range(-3, 4):
+        for dy in range(-3, 4):
+            draw.text((x + dx - 1, y + dy - 1), text,
+                      font=glow_font, fill=(232, 168, 23, 50))
+
+    # --- White text ---
+    draw.text((x, y), text, font=font, fill="white")
+
+    # --- Brand watermark at bottom ---
+    try:
+        wm_font = ImageFont.truetype(config.CAPTION_FONT_FILE, 28)
+    except Exception:
+        wm_font = ImageFont.load_default()
+    wm_text = "LUMINOUS WILL"
+    wm_w = draw.textlength(wm_text, font=wm_font)
+    draw.text(((REEL_THUMB_WIDTH - wm_w) // 2, REEL_THUMB_HEIGHT - 100),
+              wm_text, font=wm_font, fill=(180, 180, 180, 160))
+
+    return img
