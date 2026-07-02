@@ -1222,6 +1222,34 @@ def _assign_zoom_types(audio_path, segments, beat_times):
     return zooms
 
 
+def _assign_transitions(num_slides, segments):
+    """
+    # Reference analysis: 61% hard cuts, 37% fade-to-black, 2% other.
+    # Fade-to-black placed at act boundaries and ~30% of middle slides.
+    # Returns list of ("hard_cut" or "fade_black") per slide.
+    # Last slide always gets fade_black (closing).
+    """
+    transitions = ["hard_cut"] * num_slides
+    if num_slides <= 1:
+        return transitions
+
+    # --- Opening slide always fades to black (act 1 → act 2 boundary) ---
+    transitions[0] = "fade_black"
+
+    # --- Last slide fades to black (closing) ---
+    transitions[-1] = "fade_black"
+
+    # --- Middle slides: ~30% get fade-to-black (randomly distributed) ---
+    middle_indices = list(range(1, num_slides - 1))
+    if middle_indices:
+        num_fades = max(1, round(len(middle_indices) * 0.30))
+        fade_picks = random.sample(middle_indices, min(num_fades, len(middle_indices)))
+        for idx in fade_picks:
+            transitions[idx] = "fade_black"
+
+    return transitions
+
+
 def _map_slides_to_beats(beat_times, num_slides, total_duration):
     """
     # Maps slides to beat boundaries with three-act structure:
@@ -1295,7 +1323,7 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
     """
     from moviepy import (
         ImageClip, AudioFileClip, CompositeVideoClip,
-        concatenate_videoclips
+        concatenate_videoclips, vfx
     )
 
     print("[QUOTE_REEL] Assembling beat-synced video...")
@@ -1313,10 +1341,11 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
     num_images = len(quote_images)
     segments = _map_slides_to_beats(beat_times, num_images, total_duration)
     zoom_types = _assign_zoom_types(audio_path, segments, beat_times)
+    transitions = _assign_transitions(num_images, segments)
 
     print(f"[QUOTE_REEL] {num_images} slides, {total_duration:.1f}s total, {len(beat_times)} beats detected")
-    for i, ((s, e), zt) in enumerate(zip(segments, zoom_types)):
-        print(f"  Slide {i+1}: {s:.2f}s-{e:.2f}s ({e-s:.2f}s) {zt}")
+    for i, ((s, e), zt, tr) in enumerate(zip(segments, zoom_types, transitions)):
+        print(f"  Slide {i+1}: {s:.2f}s-{e:.2f}s ({e-s:.2f}s) {zt} | {tr}")
 
     clips = []
     for i, img_entry in enumerate(quote_images):
@@ -1428,6 +1457,13 @@ def assemble_quote_reel(quote_images, audio_path, output_path,
         from moviepy import VideoClip
         clip = VideoClip(frame_fn, duration=clip_duration)
         clip = clip.with_fps(30)
+
+        # --- Apply fade-to-black transition if assigned ---
+        # 0.2s fade out at end of slide (reference: quick dip to black between cuts)
+        if transitions[i] == "fade_black" and clip_duration > 0.4:
+            fade_dur = min(0.2, clip_duration * 0.3)
+            clip = clip.with_effects([vfx.FadeOut(fade_dur)])
+
         clips.append(clip)
 
     # --- Concatenate all quote clips ---
