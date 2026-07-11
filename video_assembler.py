@@ -1,4 +1,6 @@
 import os
+import json
+import subprocess
 import numpy as np
 from PIL import Image
 from moviepy import (
@@ -141,7 +143,58 @@ def assemble_video(
     final_video.close()
 
     print(f"[ASSEMBLER] Video exported successfully: {output_path}")
+    validate_output(output_path, profile)
     return output_path
+
+
+def validate_output(output_path, profile):
+    """
+    # Post-render quality gate — checks file isn't corrupted or broken
+    # before it gets uploaded and added to the review queue.
+    # Falls through with a warning if ffprobe isn't available.
+    """
+    if not os.path.exists(output_path):
+        raise ValueError(f"[VALIDATE] Output file missing: {output_path}")
+
+    file_size = os.path.getsize(output_path)
+    if file_size < 500_000:
+        raise ValueError(f"[VALIDATE] Output too small ({file_size} bytes), likely corrupted")
+
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-show_format", output_path],
+            capture_output=True, text=True, timeout=30
+        )
+        info = json.loads(result.stdout)
+
+        # Check for video stream
+        streams = info.get("streams", [])
+        has_video = any(s.get("codec_type") == "video" for s in streams)
+        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+
+        if not has_video:
+            raise ValueError("[VALIDATE] No video stream found in output")
+        if not has_audio:
+            print("[VALIDATE] Warning: no audio stream — video may be silent")
+
+        # Check resolution matches target
+        video_stream = next(s for s in streams if s.get("codec_type") == "video")
+        width = int(video_stream.get("width", 0))
+        height = int(video_stream.get("height", 0))
+        expected_w, expected_h = profile["resolution"]
+        if width != expected_w or height != expected_h:
+            print(f"[VALIDATE] Warning: resolution {width}x{height} != expected {expected_w}x{expected_h}")
+
+        # Check duration is reasonable (within 20% of expected)
+        duration = float(info.get("format", {}).get("duration", 0))
+        if duration < 5:
+            raise ValueError(f"[VALIDATE] Duration too short ({duration:.1f}s)")
+
+        print(f"[VALIDATE] Passed — {width}x{height}, {duration:.1f}s, {file_size/1_000_000:.1f}MB")
+
+    except (FileNotFoundError, json.JSONDecodeError):
+        print("[VALIDATE] Warning: ffprobe not available, skipping quality check")
 
 
 def build_visual_timeline(clip_paths, script_segments, caption_events, total_duration):
