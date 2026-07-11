@@ -83,8 +83,10 @@ def assemble_video(
                 # for smooth word-reveal animation without excessive CPU cost.
                 cache_key = (i, int(t * 12.5))
                 if cache_key not in _caption_render_cache:
-                    # Clear stale entries to prevent unbounded cache growth
-                    _caption_render_cache.clear()
+                    # Evict oldest entries when cache exceeds 128 slots
+                    # (dict preserves insertion order since Python 3.7)
+                    while len(_caption_render_cache) > 128:
+                        del _caption_render_cache[next(iter(_caption_render_cache))]
                     # --- Render caption with per-word timing info ---
                     # words=event.get("words") passes individual word timestamps
                     # current_time=t lets the renderer decide which words are visible

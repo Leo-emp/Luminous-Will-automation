@@ -9,6 +9,7 @@ from ai_quote_gen import (
     render_ai_scene_image, render_ai_bg_with_text,
     render_ai_bg_progressive, apply_post_processing,
     render_dynamic_image, render_dynamic_progressive,
+    load_used_concepts, save_used_concepts,
 )
 
 # ============================================================
@@ -1559,8 +1560,8 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
     # Word-by-word reveal: 30% chance on any slide
     # ============================================================
 
-    # --- Track used concepts to enforce variety across the batch ---
-    used_concepts = []
+    # --- Track used concepts to enforce variety across runs ---
+    used_concepts = load_used_concepts()
 
     # --- Pillow fallback pools ---
     non_plain_styles = [
@@ -1595,6 +1596,7 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
                 if frames:
                     rendered_images.append(frames)
                     used_concepts.append(concept)
+                    save_used_concepts(used_concepts)
                     slide_types.append(("quote", bg_type))
                     continue
 
@@ -1604,6 +1606,7 @@ def run_quote_reel(topic=None, beat_path=None, num_quotes=5, duration=None):
             if rendered:
                 rendered_images.append(rendered)
                 used_concepts.append(concept)
+                save_used_concepts(used_concepts)
                 slide_types.append(("quote", bg_type))
                 continue
 

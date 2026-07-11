@@ -1061,6 +1061,32 @@ def _resize_to_target(img, target_w=1080, target_h=1920):
     return img.crop((left, top, left + target_w, top + target_h))
 
 
+# --- Cross-run concept deduplication ---
+# Persists used concepts to disk so consecutive runs avoid repeating themes.
+# Keeps the last 50 concepts to prevent infinite growth.
+_CONCEPTS_FILE = os.path.join(config.BASE_DIR, "used_concepts.json")
+_MAX_STORED_CONCEPTS = 50
+
+
+def load_used_concepts():
+    # Load previously used concepts from disk for cross-run deduplication
+    try:
+        with open(_CONCEPTS_FILE, "r") as f:
+            concepts = json.load(f)
+        if isinstance(concepts, list):
+            return concepts[-_MAX_STORED_CONCEPTS:]
+        return []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def save_used_concepts(concepts):
+    # Persist used concepts to disk, keeping only the last N entries
+    trimmed = concepts[-_MAX_STORED_CONCEPTS:] if len(concepts) > _MAX_STORED_CONCEPTS else concepts
+    with open(_CONCEPTS_FILE, "w") as f:
+        json.dump(trimmed, f)
+
+
 def render_dynamic_image(quote_text, output_path, previous_concepts=None):
     """
     # The main entry point for the automated pipeline.
