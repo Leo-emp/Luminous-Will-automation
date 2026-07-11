@@ -9,6 +9,7 @@ from queue_manager import add_entry
 from metadata_generator import generate_metadata
 from thumbnail import generate_thumbnail, generate_reel_thumbnail
 from script_generator import extract_chapters
+from notify_admin import notify_admin
 
 # ============================================================
 # SCHEDULER
@@ -93,6 +94,8 @@ def generate_and_queue(video_format):
 
     except Exception as e:
         print(f"[SCHEDULER] Error: {e}")
+        # # Alert admin when video generation fails
+        notify_admin(f"{fmt_str} Video", e, {"topic": topic, "format": fmt_str})
 
 
 def generate_reel_and_queue():
@@ -130,6 +133,8 @@ def generate_reel_and_queue():
 
     except Exception as e:
         print(f"[SCHEDULER] Reel error: {e}")
+        # # Alert admin when quote reel generation fails
+        notify_admin("Quote Reel", e, {"topic": topic})
 
 
 def _post_approved():
@@ -153,6 +158,8 @@ def _post_approved():
             publish_entry(entry)
         except Exception as e:
             print(f"[SCHEDULER] Auto-post failed: {e}")
+            # # Alert admin when auto-posting fails
+            notify_admin("Auto Post", e, {"topic": topic, "entry_id": entry.get("id")})
 
 
 def run_scheduler():
