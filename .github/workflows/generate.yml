@@ -1,7 +1,19 @@
 # GitHub Actions Workflow: Automated Video Generation
-# Purpose: Triggers Luminous Will video generation on a schedule (shorts daily, long-form M/Th)
-#          or manually via workflow_dispatch with format selection.
+# Purpose: Triggers Luminous Will video generation on a schedule (shorts daily, long-form M/Th,
+#          reels daily) or manually via workflow_dispatch with format selection.
 # This workflow interacts with the HF Spaces Gradio API to queue video generation tasks.
+#
+# ── CHANGELOG ──────────────────────────────────────────────────
+# 2026-07-20: Fixed API call to match actual Gradio interface.
+#   OLD: POST /api/predict with {"data": ["$FORMAT", ""]}
+#     → This was the legacy Gradio 3.x generic endpoint.
+#     → The app no longer exposes /api/predict.
+#   NEW: POST /api/on_generate with 4 named parameters:
+#     content_type_key, format_choice, dropdown_topic, custom_topic
+#     → Matches the on_generate() function in app.py which is the
+#       real Gradio endpoint bound via generate_btn.click().
+#   Also added "reel" format option + daily 4AM UTC cron for reels.
+# ───────────────────────────────────────────────────────────────
 
 name: Automated Video Generation
 
@@ -10,12 +22,16 @@ on:
   # Schedule-based triggers
   schedule:
     # Short-form videos: daily at 3:00 AM UTC
-    # This generates quick, snappy content for social media
+    # This generates quick, snappy content for social media (9:16 vertical)
     - cron: '0 3 * * *'
 
     # Long-form videos: Monday and Thursday at 2:00 AM UTC (day 1 and 4)
-    # This generates deeper, more comprehensive content pieces
+    # This generates deeper, more comprehensive content pieces (16:9 horizontal)
     - cron: '0 2 * * 1,4'
+
+    # Quote reels: daily at 4:00 AM UTC
+    # Beat-synced motivational quote slides — high engagement, low production cost
+    - cron: '0 4 * * *'
 
   # Manual trigger via GitHub UI or API
   # Allows users to trigger generation on-demand with format selection
@@ -29,6 +45,7 @@ on:
         options:
           - short
           - long
+          - reel
 
 # Job definitions
 jobs:
@@ -44,6 +61,7 @@ jobs:
       # Step 1: Determine which format to generate
       # Logic:
       # - If manual trigger (workflow_dispatch): use the user-selected format
+      # - If reel cron (0 4 * * *): reel format
       # - If long-form cron (0 2 * * 1,4): long format
       # - Otherwise: short format (default daily cron)
       - name: Determine format
@@ -54,6 +72,10 @@ jobs:
             # User selected format via UI
             echo "format=${{ github.event.inputs.format }}" >> $GITHUB_OUTPUT
             echo "Trigger: Manual dispatch with format=${{ github.event.inputs.format }}"
+          # Check if this is the reel cron schedule (daily 4 AM UTC)
+          elif [ "${{ github.event.schedule }}" = "0 4 * * *" ]; then
+            echo "format=reel" >> $GITHUB_OUTPUT
+            echo "Trigger: Reel schedule (daily 4 AM UTC)"
           # Check if this is the long-form cron schedule (Mon/Thu)
           elif [ "${{ github.event.schedule }}" = "0 2 * * 1,4" ]; then
             # Scheduled for Monday (1) or Thursday (4) at 2 AM UTC
@@ -113,31 +135,66 @@ jobs:
           echo "Proceeding with API call..."
 
       # Step 4: Trigger video generation via Gradio API
-      # Calls the /api/predict endpoint on the Gradio app.
-      # Payload format: {"data": [format, ""]}
-      #   - format: "short" or "long"
-      #   - empty string: placeholder for future parameters
-      # Timeout: 600 seconds (10 minutes) for the HTTP request itself
+      # ─── UPDATED: Now calls /api/on_generate instead of /api/predict ───
+      # The Gradio app exposes on_generate() with these 4 parameters:
+      #   1. content_type_key: "dark_motivation" | "stoic_philosophy" | "wealth_mindset" | "dark_psychology"
+      #   2. format_choice: "Vertical Short (9:16)" | "Horizontal Long (16:9)"
+      #   3. dropdown_topic: "(Random)" or a specific topic from the content type's list
+      #   4. custom_topic: "" (empty string, could be used for custom text)
+      #
+      # For "reel" format, we still pass "Vertical Short (9:16)" because reels
+      # are vertical — the pipeline detects the reel content type separately.
+      #
+      # The old /api/predict endpoint with {"data": ["$FORMAT", ""]} no longer works
+      # because the Gradio app binds generate_btn.click() to on_generate() which
+      # expects 4 inputs: [content_type_dropdown, format_dropdown, topic_dropdown, custom_topic]
       - name: Trigger video generation
         run: |
           # Retrieve the format from previous step output
           FORMAT="${{ steps.format.outputs.format }}"
 
-          # Gradio API endpoint
-          GRADIO_PREDICT_URL="https://leoemp-luminous-will.hf.space/api/predict"
+          # ── Map format to Gradio parameters ──
+          # The Gradio app uses dropdown label strings, not "short"/"long" keys
+          if [ "$FORMAT" = "long" ]; then
+            FORMAT_CHOICE="Horizontal Long (16:9)"
+          else
+            # Both "short" and "reel" use vertical format
+            FORMAT_CHOICE="Vertical Short (9:16)"
+          fi
+
+          # ── Pick a content type ──
+          # Rotate through all 4 types based on day of week
+          # This ensures variety across automated runs
+          CONTENT_TYPES=("dark_motivation" "stoic_philosophy" "wealth_mindset" "dark_psychology")
+          DAY_OF_WEEK=$(date +%u)  # 1=Monday ... 7=Sunday
+          TYPE_INDEX=$(( (DAY_OF_WEEK - 1) % 4 ))
+          CONTENT_TYPE="${CONTENT_TYPES[$TYPE_INDEX]}"
+
+          # ── Gradio named API endpoint ──
+          # Gradio exposes named endpoints at /api/<fn_name>
+          # The on_generate function is bound via generate_btn.click(fn=on_generate, ...)
+          GRADIO_API_URL="https://leoemp-luminous-will.hf.space/api/on_generate"
 
           echo "Triggering $FORMAT video generation..."
-          echo "API Endpoint: $GRADIO_PREDICT_URL"
+          echo "  Content type: $CONTENT_TYPE"
+          echo "  Format choice: $FORMAT_CHOICE"
+          echo "  API Endpoint: $GRADIO_API_URL"
 
-          # Construct JSON payload: format and empty placeholder parameter
-          PAYLOAD="{\"data\": [\"$FORMAT\", \"\"]}"
+          # ── Build JSON payload with 4 parameters ──
+          # These map directly to on_generate(content_type_key, format_choice, dropdown_topic, custom)
+          PAYLOAD=$(cat <<EOFPAYLOAD
+          {
+            "data": ["$CONTENT_TYPE", "$FORMAT_CHOICE", "(Random)", ""]
+          }
+          EOFPAYLOAD
+          )
           echo "Payload: $PAYLOAD"
 
           # Call Gradio API
           # --max-time 600 = HTTP request timeout of 10 minutes
           # This allows the generation to start and potentially complete within the call
           RESPONSE=$(curl -s -X POST \
-            "$GRADIO_PREDICT_URL" \
+            "$GRADIO_API_URL" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" \
             --max-time 600)

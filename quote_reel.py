@@ -1,4 +1,5 @@
 import os
+import json
 import random
 import textwrap
 import numpy as np
@@ -11,6 +12,59 @@ from ai_quote_gen import (
     render_dynamic_image, render_dynamic_progressive,
     load_used_concepts, save_used_concepts,
 )
+
+
+# ============================================================
+# QUOTE DEDUPLICATION SYSTEM
+# ============================================================
+# Prevents Gemini from generating the same quotes across runs.
+# Works identically to the used_concepts.json system in ai_quote_gen.py:
+#   1. Load previously used quotes from disk
+#   2. Pass them as an exclusion list in the Gemini prompt
+#   3. Save newly generated quotes after each run
+#   4. Cap at 200 entries (remove oldest when exceeding)
+#
+# File: used_quotes.json (same directory as used_concepts.json)
+# Format: simple JSON array of quote strings
+# ============================================================
+
+# --- Path to the dedup file (sits alongside used_concepts.json in project root) ---
+_QUOTES_FILE = os.path.join(config.BASE_DIR, "used_quotes.json")
+# --- Keep the last 200 quotes — enough to prevent repeats across ~40 runs ---
+# (Each run generates ~5 quotes, so 200 covers roughly 40 previous runs)
+_MAX_STORED_QUOTES = 200
+
+
+def load_used_quotes():
+    """
+    # Loads previously generated quotes from disk for cross-run deduplication.
+    # Returns the last _MAX_STORED_QUOTES entries (oldest trimmed first).
+    # Returns empty list if file doesn't exist or is corrupted.
+    # Follows the same pattern as load_used_concepts() in ai_quote_gen.py.
+    """
+    try:
+        with open(_QUOTES_FILE, "r") as f:
+            quotes = json.load(f)
+        # --- Validate: must be a list of strings ---
+        if isinstance(quotes, list):
+            # --- Only keep the most recent entries to cap file size ---
+            return quotes[-_MAX_STORED_QUOTES:]
+        return []
+    except (FileNotFoundError, json.JSONDecodeError):
+        # --- File doesn't exist yet (first run) or got corrupted ---
+        return []
+
+
+def save_used_quotes(quotes):
+    """
+    # Persists used quotes to disk, trimming to the last _MAX_STORED_QUOTES.
+    # Called after each successful generation to grow the exclusion list.
+    # Follows the same pattern as save_used_concepts() in ai_quote_gen.py.
+    """
+    # --- Trim to max capacity (remove oldest entries from the front) ---
+    trimmed = quotes[-_MAX_STORED_QUOTES:] if len(quotes) > _MAX_STORED_QUOTES else quotes
+    with open(_QUOTES_FILE, "w") as f:
+        json.dump(trimmed, f)
 
 # ============================================================
 # QUOTE REEL GENERATOR
@@ -418,8 +472,11 @@ GRAFFITI_COLORS = [
 
 def generate_quotes(topic=None, count=5):
     """
-    # Uses Gemini to generate short punchy motivational quotes
-    # Returns a list of quote strings
+    # Uses Gemini to generate short punchy motivational quotes.
+    # Now includes DEDUPLICATION: loads previously used quotes and
+    # passes them as an exclusion list so Gemini avoids repeating them.
+    #
+    # Returns (list_of_quote_strings, topic_string)
     """
     import google.generativeai as genai
 
@@ -429,6 +486,26 @@ def generate_quotes(topic=None, count=5):
     # --- Pick a random topic if none given ---
     if not topic:
         topic = random.choice(config.TRENDING_TOPICS)
+
+    # --- DEDUP STEP 1: Load previously used quotes ---
+    # This list is passed to Gemini so it knows what to avoid.
+    # We only send the last 200 to keep the prompt size manageable.
+    used_quotes = load_used_quotes()
+
+    # --- Build the exclusion block for the prompt ---
+    # Only include if we have previous quotes to exclude
+    exclusion_block = ""
+    if used_quotes:
+        # --- Format as a numbered list so Gemini can clearly see each one ---
+        # Limit to last 200 quotes (the file is already capped, but be safe)
+        recent_quotes = used_quotes[-_MAX_STORED_QUOTES:]
+        exclusion_lines = "\n".join(f"  - {q}" for q in recent_quotes)
+        exclusion_block = f"""
+
+IMPORTANT — DO NOT repeat any of these previously used quotes:
+{exclusion_lines}
+
+Generate completely FRESH quotes that are different from all of the above."""
 
     prompt = f"""Generate {count} short, punchy motivational quotes about: {topic}
 
@@ -449,7 +526,7 @@ EXAMPLES of the vibe:
 - Make it happen. Shock everyone.
 - Pain builds you. Comfort weakens you.
 - Brick by brick. Day by day. A win is a win.
-
+{exclusion_block}
 Generate {count} quotes now:"""
 
     response = model.generate_content(prompt)
@@ -462,8 +539,20 @@ Generate {count} quotes now:"""
         if cleaned and len(cleaned) > 2:
             quotes.append(cleaned)
 
+    # --- Trim to requested count ---
+    quotes = quotes[:count]
+
+    # --- DEDUP STEP 2: Save the new quotes to the exclusion file ---
+    # Append new quotes to the list and persist to disk
+    # This grows the exclusion list for the next run
+    if quotes:
+        used_quotes.extend(quotes)
+        save_used_quotes(used_quotes)
+        print(f"[QUOTE_REEL] Saved {len(quotes)} new quotes to dedup file "
+              f"(total: {len(used_quotes[-_MAX_STORED_QUOTES:])} stored)")
+
     print(f"[QUOTE_REEL] Generated {len(quotes)} quotes for topic: {topic}")
-    return quotes[:count], topic
+    return quotes, topic
 
 
 def _pick_bg_type():
