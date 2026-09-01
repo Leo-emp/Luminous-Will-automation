@@ -184,8 +184,9 @@ def validate_output(output_path, profile):
         video_stream = next(s for s in streams if s.get("codec_type") == "video")
         width = int(video_stream.get("width", 0))
         height = int(video_stream.get("height", 0))
-        expected_w, expected_h = profile["resolution"]
-        if width != expected_w or height != expected_h:
+        expected_w = profile.get("width", profile.get("resolution", [0,0])[0] if "resolution" in profile else 0)
+        expected_h = profile.get("height", profile.get("resolution", [0,0])[1] if "resolution" in profile else 0)
+        if expected_w and expected_h and (width != expected_w or height != expected_h):
             print(f"[VALIDATE] Warning: resolution {width}x{height} != expected {expected_w}x{expected_h}")
 
         # Check duration is reasonable (within 20% of expected)

@@ -56,14 +56,14 @@ FORMAT_PROFILES = {
         "duration_range": (60, 90),
         # --- Captions ---
         "caption_font_size": 65,
-        "caption_position_y": 0.83,
+        "caption_position_y": 0.60,
         "caption_stroke_width": 2,
         # --- Color grading ---
         "brightness_factor": 0.55,
         "saturation_factor": 0.45,
         # --- Audio mixing (dB-based) ---
         "voiceover_boost_db": 3.0,           # +3 dB boost — phone-optimized, voice cuts through
-        "music_level_db": -11,               # -11 dB — audible but never overpowers voice on phone
+        "music_level_db": -6,                # -6 dB — clearly audible background music
         # --- Ken Burns ---
         "ken_burns_enabled": True,           # global toggle for motion effects
         # --- Transitions ---
@@ -145,7 +145,7 @@ VOICE_SETTINGS = {
     "style": 0.0,                # 0% style - no variation = commanding delivery
     "use_speaker_boost": True,   # speaker boost enabled - deeper resonance
 }
-VOICE_SPEED = 0.83  # matched to user's preferred pace
+VOICE_SPEED = 0.75  # slower, more deliberate pace for dark motivation
 
 # --- Video Settings ---
 VIDEO_WIDTH = 1080
@@ -161,7 +161,7 @@ CAPTION_FONT_SIZE = 65       # measured from real videos
 CAPTION_COLOR = "white"
 CAPTION_HIGHLIGHT_COLOR = "#E8A817"  # warm amber (matched from video frames)
 CAPTION_FONT = "Arial-Bold"
-CAPTION_POSITION = ("center", 0.83)  # 83% from top (measured: 83.2%)
+CAPTION_POSITION = ("center", 0.60)  # 60% from top — above platform UI overlay zone
 CAPTION_STROKE_COLOR = "black"
 CAPTION_STROKE_WIDTH = 2     # thinner stroke for cleaner look (matched from videos)
 
@@ -181,7 +181,7 @@ CONTRAST_FACTOR = 1.20      # stronger contrast (measured from videos)
 
 # --- Audio Settings (legacy — new code uses dB values from profiles) ---
 VOICEOVER_VOLUME = 1.0      # full volume for voiceover (always dominant, crystal clear)
-MUSIC_VOLUME = 0.15         # 15% volume - matches brand_reference.py spec for subtle bed
+MUSIC_VOLUME = 0.30         # 30% volume - clearly audible motivational background
                             # voice stays crystal clear as the dominant element
                             # music provides atmosphere without competing
 
