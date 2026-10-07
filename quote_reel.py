@@ -478,10 +478,9 @@ def generate_quotes(topic=None, count=5):
     #
     # Returns (list_of_quote_strings, topic_string)
     """
-    import google.generativeai as genai
+    from google import genai
 
-    genai.configure(api_key=config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.0-flash")
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     # --- Pick a random topic if none given ---
     if not topic:
@@ -529,7 +528,7 @@ EXAMPLES of the vibe:
 {exclusion_block}
 Generate {count} quotes now:"""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
     # --- Parse quotes from response (one per line, skip empty) ---
     raw_lines = response.text.strip().split("\n")
     quotes = []

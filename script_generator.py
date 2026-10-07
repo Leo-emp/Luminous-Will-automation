@@ -2,7 +2,7 @@ import random
 import json
 import os
 import config
-import google.generativeai as genai
+from google import genai
 from datetime import date
 
 # ============================================================
@@ -304,8 +304,7 @@ def discover_topics():
     history = load_generated_history()
     used_topics = [entry["topic"] for entry in history]
 
-    genai.configure(api_key=config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     prompt = f"""You are a content strategist for "Luminous Will" — a dark motivation YouTube/TikTok channel.
 
@@ -326,7 +325,7 @@ OUTPUT FORMAT — respond with ONLY a JSON array of strings, no markdown:
 ["Topic idea 1", "Topic idea 2", ...]"""
 
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
         raw_text = response.text.strip()
 
         # --- Strip markdown fences if Gemini added them ---
@@ -484,8 +483,7 @@ def _generate_short_script_gemini(topic, custom_hook=None):
     # Returns: list of 25 segment dicts
     """
 
-    genai.configure(api_key=config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     # --- Build hook instruction for the prompt ---
     # If caller supplied a hook, lock Gemini to use it
@@ -543,7 +541,7 @@ VISUAL KEYWORD RULES:
 
 Generate the script now. 25 segments, JSON array only."""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
     raw_text = response.text.strip()
 
     # --- Strip markdown code fences if Gemini added them ---
@@ -601,8 +599,7 @@ def _generate_long_script_gemini(topic):
     # Returns: list of 50 segment dicts
     """
 
-    genai.configure(api_key=config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     prompt = f"""You are a scriptwriter for the YouTube channel "Luminous Will" — dark motivation, stoic philosophy, psychology of power.
 
@@ -661,7 +658,7 @@ TRANSITION GUIDE:
 
 Generate the script now. 50 segments, JSON array only."""
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
     raw_text = response.text.strip()
 
     # --- Strip markdown code fences if Gemini added them ---
@@ -876,8 +873,7 @@ def enrich_visual_keywords(segments):
 
     print(f"[SCRIPT] Enriching {len(needs_enrichment)} segments with alt visual keywords...")
 
-    genai.configure(api_key=config.GEMINI_API_KEY)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+    client = genai.Client(api_key=config.GEMINI_API_KEY)
 
     # --- Build the batch prompt with all segments that need alts ---
     segment_list = []
@@ -912,7 +908,7 @@ OUTPUT FORMAT — respond with ONLY a JSON array, no markdown:
 ]"""
 
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
         raw_text = response.text.strip()
 
         # --- Strip markdown code fences if present ---
