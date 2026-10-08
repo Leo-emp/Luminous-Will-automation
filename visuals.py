@@ -358,7 +358,23 @@ def search_and_download_videos(script_segments, output_dir, profile=None):
             "wolf dark forest", "dark ocean waves", "man rooftop city night",
         ]
 
+    # --- Check for cached clips from a previous run ---
+    existing_clips = sorted([
+        os.path.join(output_dir, f) for f in os.listdir(output_dir)
+        if f.startswith("clip_") and f.endswith(".mp4") and os.path.getsize(os.path.join(output_dir, f)) > 50_000
+    ])
+    if len(existing_clips) >= len(script_segments):
+        print(f"[VISUALS] CACHED — reusing {len(existing_clips)} clips from {os.path.basename(output_dir)}/")
+        return existing_clips[:len(script_segments)]
+
     for i, segment in enumerate(script_segments):
+        # --- Skip if this specific clip is already downloaded ---
+        clip_path = os.path.join(output_dir, f"clip_{i:03d}.mp4")
+        if os.path.exists(clip_path) and os.path.getsize(clip_path) > 50_000:
+            print(f"[VISUALS] ({i+1}/{len(script_segments)}) CACHED: {os.path.basename(clip_path)}")
+            downloaded_clips.append(clip_path)
+            continue
+
         keywords = segment["visual_keywords"]
         script_text = segment.get("text", "")
         alt_keywords = segment.get("visual_keywords_alt", [])

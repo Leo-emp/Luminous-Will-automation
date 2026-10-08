@@ -34,11 +34,13 @@ def assemble_video(
     music_path,
     output_path,
     video_format=None,
+    work_dir=None,
 ):
     """
     # Main assembly function - builds the complete video
     # Format-aware: uses profile settings for resolution, bitrate,
     # transitions, and music mixing mode.
+    # work_dir: topic-specific temp dir for caching graded clips + base video
     """
 
     from config import VideoFormat, get_format_profile
@@ -60,10 +62,8 @@ def assemble_video(
         clip_paths, script_segments, caption_events, total_duration
     )
 
-    # --- Step 3: Create base video ---
-    # Pass script_segments so create_base_video can look up motion_style
-    # for each clip's matching segment (Ken Burns per-segment control)
-    base_video = create_base_video(visual_timeline, total_duration, profile, script_segments)
+    # --- Step 3: Create base video (with caching in work_dir) ---
+    base_video = create_base_video(visual_timeline, total_duration, profile, script_segments, work_dir=work_dir)
     print(f"[ASSEMBLER] Base video created: {base_video.duration:.1f}s")
 
     # --- Step 4: Burn captions on-the-fly ---
@@ -128,15 +128,20 @@ def assemble_video(
     final_video = final_video.with_audio(final_audio)
 
     # --- Step 7: Export ---
+    import gc
+    gc.collect()
     print(f"[ASSEMBLER] Exporting final video to: {output_path}")
+    # --- Use medium preset + 1 thread to prevent OOM on caption-burn export ---
+    # "slow" + 4 threads caused the encoder to crash at ~5s on 1080x1920,
+    # silently truncating the video track while audio kept writing.
     final_video.write_videofile(
         output_path,
         fps=profile["fps"],
         codec="libx264",
         audio_codec="aac",
         bitrate=profile["bitrate"],
-        preset="slow",
-        threads=4,
+        preset="medium",
+        threads=1,
     )
 
     # --- Cleanup ---
@@ -189,12 +194,22 @@ def validate_output(output_path, profile):
         if expected_w and expected_h and (width != expected_w or height != expected_h):
             print(f"[VALIDATE] Warning: resolution {width}x{height} != expected {expected_w}x{expected_h}")
 
-        # Check duration is reasonable (within 20% of expected)
+        # Check video vs audio stream durations match (OOM truncation guard)
+        video_dur = float(video_stream.get("duration", 0))
+        audio_stream = next((s for s in streams if s.get("codec_type") == "audio"), None)
+        audio_dur = float(audio_stream.get("duration", 0)) if audio_stream else 0
+        if audio_dur > 0 and video_dur > 0 and video_dur < audio_dur * 0.8:
+            raise ValueError(
+                f"[VALIDATE] Video truncated: video={video_dur:.1f}s vs audio={audio_dur:.1f}s "
+                f"(encoder likely OOM'd mid-render)"
+            )
+
+        # Check duration is reasonable
         duration = float(info.get("format", {}).get("duration", 0))
         if duration < 5:
             raise ValueError(f"[VALIDATE] Duration too short ({duration:.1f}s)")
 
-        print(f"[VALIDATE] Passed — {width}x{height}, {duration:.1f}s, {file_size/1_000_000:.1f}MB")
+        print(f"[VALIDATE] Passed — {width}x{height}, video={video_dur:.1f}s, audio={audio_dur:.1f}s, {file_size/1_000_000:.1f}MB")
 
     except (FileNotFoundError, json.JSONDecodeError):
         print("[VALIDATE] Warning: ffprobe not available, skipping quality check")
@@ -354,42 +369,46 @@ def calculate_segment_times(script_segments, caption_events, total_duration):
     return segment_times
 
 
-def create_base_video(visual_timeline, total_duration, profile, script_segments=None):
+def create_base_video(visual_timeline, total_duration, profile, script_segments=None, work_dir=None):
     """
     # Creates the base video processing clips one at a time.
-    # Uses profile for resolution, bitrate, color grading, and transitions.
-    #
-    # script_segments (optional): list of script segment dicts, each may have
-    #   a "motion_style" field ("ken_burns_zoom", "ken_burns_pan",
-    #   "slow_zoom_out", "static", or absent → treated as "static").
-    #   Used to apply Ken Burns per-clip when profile["ken_burns_enabled"] = True.
+    # Caches graded clips + base video in work_dir so retries skip re-encoding.
     """
     import subprocess
     from color_grading import create_grader
 
-    temp_clip_dir = os.path.join(config.TEMP_DIR, "_graded_clips")
+    # --- Use topic-specific work_dir for caching, fall back to shared dir ---
+    if work_dir:
+        temp_clip_dir = os.path.join(work_dir, "graded_clips")
+    else:
+        temp_clip_dir = os.path.join(config.TEMP_DIR, "_graded_clips")
     os.makedirs(temp_clip_dir, exist_ok=True)
+
+    # --- Check for cached base video (skip everything if it exists) ---
+    base_path = os.path.join(temp_clip_dir, "base_video.mp4")
+    if os.path.exists(base_path) and os.path.getsize(base_path) > 100_000:
+        try:
+            cached_base = VideoFileClip(base_path)
+            if abs(cached_base.duration - total_duration) < 2.0:
+                print(f"[ASSEMBLER] BASE VIDEO CACHED — reusing {cached_base.duration:.1f}s")
+                return cached_base
+            cached_base.close()
+        except Exception:
+            pass
 
     grader = create_grader(profile)
     frame_w = profile["width"]
     frame_h = profile["height"]
     bitrate = profile["bitrate"]
 
-    # --- Determine whether Ken Burns is globally enabled ---
-    # The profile flag is the master switch; individual segments can still
-    # be "static" which means no motion for that specific clip.
     ken_burns_globally_enabled = profile.get("ken_burns_enabled", False)
-
-    # --- Normalise script_segments to an empty list if not provided ---
-    # This keeps the rest of the loop safe with a simple index check.
     script_segments_ref = script_segments if script_segments else []
 
     graded_paths = []
     actual_duration = 0.0
-
-    # --- Pull crossfade duration from profile (default: 1.0s) ---
-    # Used when _get_transition_type returns "crossfade" for a clip
     crossfade_duration = profile.get("crossfade_duration", 1.0)
+
+    import gc
 
     for idx, entry in enumerate(visual_timeline):
         needed = entry["duration"]
@@ -397,6 +416,23 @@ def create_base_video(visual_timeline, total_duration, profile, script_segments=
             continue
 
         graded_path = os.path.join(temp_clip_dir, f"graded_{idx:03d}.mp4")
+
+        # --- Skip if cached graded clip exists with matching duration ---
+        if os.path.exists(graded_path) and os.path.getsize(graded_path) > 10_000:
+            try:
+                cached_dur = float(subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                     "-of", "csv=p=0", graded_path],
+                    capture_output=True, text=True, timeout=10
+                ).stdout.strip())
+                if abs(cached_dur - needed) < 0.5:
+                    print(f"[ASSEMBLER] CACHED clip {idx+1}/{len(visual_timeline)} ({cached_dur:.1f}s)")
+                    actual_duration += needed
+                    graded_paths.append(graded_path)
+                    continue
+            except Exception:
+                pass
+
         try:
             clip = VideoFileClip(entry["path"])
             clip = fit_clip(clip, profile)
@@ -408,95 +444,94 @@ def create_base_video(visual_timeline, total_duration, profile, script_segments=
                 clip = concatenate_videoclips([clip] * loops_needed, method="chain")
                 clip = clip.subclipped(0, needed)
 
-            # --- Apply Ken Burns motion (if enabled and segment has motion_style) ---
-            # Runs AFTER fit_clip (so the clip is already the right size),
-            # BEFORE color grading (so we grade the final cropped output).
-            #
-            # Process:
-            #   1. Look up this segment's motion_style (defaults to "static")
-            #   2. _get_ken_burns_params returns None for static → skip
-            #   3. _apply_ken_burns wraps the clip with a per-frame transform
             if ken_burns_globally_enabled and idx < len(script_segments_ref):
-                # Fetch the motion_style for this segment (default: "static")
                 motion_style = script_segments_ref[idx].get("motion_style", "static")
                 kb_params = _get_ken_burns_params(motion_style, needed)
                 if kb_params:
-                    # Motion requested — apply the Ken Burns transform
                     clip = _apply_ken_burns(clip, kb_params, frame_w, frame_h)
                     print(f"[ASSEMBLER] Ken Burns: {motion_style} on clip {idx+1}/{len(visual_timeline)}")
-                # If kb_params is None (static), no transform is applied
 
-            # --- Apply context-aware transition to start of this clip ---
-            # Look up previous segment (None for the first clip) and determine
-            # whether to fade in from black (crossfade) or start instantly (cut).
-            #
-            # _get_transition_type priority:
-            #   1. Explicit "transition" field on this segment
-            #   2. First clip (idx == 0) → always crossfade for clean open
-            #   3. Mood change vs previous segment → crossfade
-            #   4. Same mood → hard cut
             prev_seg = script_segments_ref[idx - 1] if idx > 0 and idx < len(script_segments_ref) + 1 else None
             curr_seg = script_segments_ref[idx] if idx < len(script_segments_ref) else None
-
             transition_type = _get_transition_type(prev_seg, curr_seg)
 
             if transition_type == "crossfade" and clip.duration > crossfade_duration:
-                # --- Apply a fade-in from black at the start of this clip ---
-                # CrossFadeIn creates a smooth dissolve from black over `crossfade_duration`
-                # seconds — the standard approach when each clip is written individually.
-                # For a true between-clip blend you'd need CompositeVideoClip; for the
-                # single-file-per-clip pipeline, CrossFadeIn (fade from black) is the
-                # correct and efficient approach.
                 clip = clip.with_effects([vfx.CrossFadeIn(crossfade_duration)])
                 print(f"[ASSEMBLER] Transition: crossfade ({crossfade_duration}s) on clip {idx+1}/{len(visual_timeline)}")
-            else:
-                # Hard cut: no effect applied — clip starts at full opacity instantly
-                if transition_type == "cut":
-                    print(f"[ASSEMBLER] Transition: cut (hard) on clip {idx+1}/{len(visual_timeline)}")
+            elif transition_type == "cut":
+                print(f"[ASSEMBLER] Transition: cut (hard) on clip {idx+1}/{len(visual_timeline)}")
 
             clip = clip.image_transform(grader)
 
             clip.write_videofile(
                 graded_path, fps=profile["fps"], codec="libx264",
-                bitrate=bitrate, preset="fast", threads=2,
+                bitrate=bitrate, preset="ultrafast", threads=1,
                 audio=False, logger=None,
             )
             clip.close()
             del clip
+            gc.collect()
             actual_duration += needed
             graded_paths.append(graded_path)
             print(f"[ASSEMBLER] Graded clip {idx+1}/{len(visual_timeline)}")
 
         except Exception as e:
             print(f"[ASSEMBLER] Error on clip {idx}: {e}")
-            black = np.zeros((frame_h, frame_w, 3), dtype=np.uint8)
-            blk = ImageClip(black).with_duration(needed)
-            blk.write_videofile(
-                graded_path, fps=profile["fps"], codec="libx264",
-                audio=False, logger=None,
-            )
-            blk.close()
+            try:
+                import imageio_ffmpeg
+                _ff = imageio_ffmpeg.get_ffmpeg_exe()
+                subprocess.run([
+                    _ff, "-y", "-f", "lavfi",
+                    "-i", f"color=c=black:s={frame_w}x{frame_h}:d={needed}:r={profile['fps']}",
+                    "-c:v", "libx264", "-preset", "ultrafast",
+                    "-an", graded_path,
+                ], capture_output=True, timeout=30)
+            except Exception:
+                black = np.zeros((frame_h, frame_w, 3), dtype=np.uint8)
+                blk = ImageClip(black).with_duration(needed)
+                blk.write_videofile(
+                    graded_path, fps=profile["fps"], codec="libx264",
+                    preset="ultrafast", threads=1,
+                    audio=False, logger=None,
+                )
+                blk.close()
+            gc.collect()
             actual_duration += needed
             graded_paths.append(graded_path)
 
     # --- Extend if too short ---
     if actual_duration < total_duration and graded_paths:
         gap = total_duration - actual_duration
-        print(f"[ASSEMBLER] Extending last clip by {gap:.1f}s to fill duration")
-        last_path = visual_timeline[-1]["path"]
         filler_path = os.path.join(temp_clip_dir, "graded_filler.mp4")
-        clip = VideoFileClip(last_path)
-        clip = fit_clip(clip, profile)
-        if clip.duration < gap:
-            clip = concatenate_videoclips([clip] * (int(gap / clip.duration) + 1), method="chain")
-        clip = clip.subclipped(0, gap)
-        clip = clip.image_transform(grader)
-        clip.write_videofile(
-            filler_path, fps=profile["fps"], codec="libx264",
-            bitrate=bitrate, preset="fast", threads=2,
-            audio=False, logger=None,
-        )
-        clip.close()
+        # --- Check filler cache ---
+        need_filler = True
+        if os.path.exists(filler_path) and os.path.getsize(filler_path) > 10_000:
+            try:
+                cached_dur = float(subprocess.run(
+                    ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                     "-of", "csv=p=0", filler_path],
+                    capture_output=True, text=True, timeout=10
+                ).stdout.strip())
+                if abs(cached_dur - gap) < 0.5:
+                    print(f"[ASSEMBLER] CACHED filler ({cached_dur:.1f}s)")
+                    need_filler = False
+            except Exception:
+                pass
+        if need_filler:
+            print(f"[ASSEMBLER] Extending last clip by {gap:.1f}s to fill duration")
+            last_path = visual_timeline[-1]["path"]
+            clip = VideoFileClip(last_path)
+            clip = fit_clip(clip, profile)
+            if clip.duration < gap:
+                clip = concatenate_videoclips([clip] * (int(gap / clip.duration) + 1), method="chain")
+            clip = clip.subclipped(0, gap)
+            clip = clip.image_transform(grader)
+            clip.write_videofile(
+                filler_path, fps=profile["fps"], codec="libx264",
+                bitrate=bitrate, preset="ultrafast", threads=1,
+                audio=False, logger=None,
+            )
+            clip.close()
         graded_paths.append(filler_path)
 
     # --- Concatenate via ffmpeg ---
@@ -508,7 +543,6 @@ def create_base_video(visual_timeline, total_duration, profile, script_segments=
         for p in graded_paths:
             f.write(f"file '{p.replace(os.sep, '/')}'\n")
 
-    base_path = os.path.join(temp_clip_dir, "base_video.mp4")
     subprocess.run([
         ffmpeg_exe, "-y", "-f", "concat", "-safe", "0",
         "-i", concat_list, "-c", "copy", base_path,

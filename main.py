@@ -102,24 +102,75 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
     validate_references()
 
     # --- STEP 2: GENERATE SCRIPT ---
+    # Uses a topic-only temp directory so retries reuse cached voiceover + script.
+    # This prevents wasting ElevenLabs/Gemini credits when video assembly fails
+    # but voiceover/script were already generated successfully.
     print("\n[STEP 2/9] Generating script...")
-    script_segments, topic = generate_script(topic, video_format=video_format)
+
+    # --- Build topic-stable temp dir (no timestamp — survives retries) ---
+    # The timestamp only goes on the final output filename, not the work dir.
+    if topic:
+        safe_topic = topic.replace(" ", "_").replace("'", "")[:50]
+    else:
+        safe_topic = "_pending"
+
+    video_temp = os.path.join(config.TEMP_DIR, f"{safe_topic}_{video_format.value}")
+    os.makedirs(video_temp, exist_ok=True)
+
+    # --- Check for cached script segments from a previous failed run ---
+    import json as _json
+    script_cache_path = os.path.join(video_temp, "script_segments.json")
+    cached_script = None
+
+    if os.path.exists(script_cache_path):
+        try:
+            with open(script_cache_path, "r", encoding="utf-8") as f:
+                cached_data = _json.load(f)
+            cached_script = cached_data.get("segments")
+            cached_topic = cached_data.get("topic", topic)
+            if cached_script and len(cached_script) > 2:
+                print(f"[SCRIPT] CACHED — reusing {len(cached_script)} segments for '{cached_topic}'")
+                script_segments = cached_script
+                topic = cached_topic
+            else:
+                cached_script = None
+        except Exception:
+            cached_script = None
+
+    if not cached_script:
+        # --- Generate fresh script (costs Gemini credits) ---
+        script_segments, topic = generate_script(topic, video_format=video_format)
+        # --- Update safe_topic now that we know the actual topic ---
+        safe_topic = topic.replace(" ", "_").replace("'", "")[:50]
+        # --- Move temp dir to the real topic name if it started as _pending ---
+        real_temp = os.path.join(config.TEMP_DIR, f"{safe_topic}_{video_format.value}")
+        if real_temp != video_temp:
+            if os.path.exists(real_temp):
+                video_temp = real_temp
+            else:
+                os.rename(video_temp, real_temp)
+                video_temp = real_temp
+        # --- Cache script segments for retry ---
+        script_cache_path = os.path.join(video_temp, "script_segments.json")
+        with open(script_cache_path, "w", encoding="utf-8") as f:
+            _json.dump({"topic": topic, "segments": script_segments}, f, indent=2)
+        print(f"[SCRIPT] Cached to {os.path.basename(script_cache_path)}")
+
     full_script = get_script_text(script_segments)
     print(f"[SCRIPT] Topic: {topic}")
     print(f"[SCRIPT] Segments: {len(script_segments)}")
     print(f"[SCRIPT] Full text:\n  {full_script[:200]}...")
 
-    safe_topic = topic.replace(" ", "_").replace("'", "")[:50]
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    video_name = f"{safe_topic}_{timestamp}"
-    video_temp = os.path.join(config.TEMP_DIR, video_name)
-    os.makedirs(video_temp, exist_ok=True)
-
     # --- STEP 3: GENERATE VOICEOVER ---
+    # voiceover.py already checks for cached audio + timestamps in this dir.
+    # Since we use a stable dir name, retries skip ElevenLabs entirely.
     print("\n[STEP 3/9] Generating voiceover...")
     voiceover_path = os.path.join(video_temp, "voiceover.mp3")
     word_timestamps = generate_voiceover(full_script, voiceover_path, profile=profile)
-    audio_duration = get_audio_duration(voiceover_path)
+    # --- Use trimmed voiceover if it exists (pause trimming creates _trimmed.mp3) ---
+    trimmed_path = voiceover_path.replace(".mp3", "_trimmed.mp3")
+    actual_voiceover = trimmed_path if os.path.exists(trimmed_path) else voiceover_path
+    audio_duration = get_audio_duration(actual_voiceover)
     print(f"[VOICEOVER] Duration: {audio_duration:.1f}s")
 
     # --- STEP 4: DOWNLOAD STOCK FOOTAGE ---
@@ -139,7 +190,9 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
 
     # --- STEP 6: ASSEMBLE FINAL VIDEO ---
     print("\n[STEP 6/9] Assembling final video...")
-    output_path = os.path.join(config.OUTPUT_DIR, f"{video_name}.mp4")
+    # --- Timestamp only on the output filename, not the work dir ---
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    output_path = os.path.join(config.OUTPUT_DIR, f"{safe_topic}_{timestamp}.mp4")
     # --- Mood-based music selection (matches track to script's dominant mood) ---
     music_path = select_music(script_segments)
 
@@ -148,12 +201,13 @@ def run_pipeline(topic=None, video_format=None, quality="1080p"):
 
     assemble_video(
         clip_paths=clip_paths,
-        voiceover_path=voiceover_path,
+        voiceover_path=actual_voiceover,
         caption_events=caption_events,
         script_segments=script_segments,
         music_path=music_path,
         output_path=output_path,
         video_format=video_format,
+        work_dir=video_temp,
     )
 
     # --- STEP 7: GENERATE THUMBNAIL ---
