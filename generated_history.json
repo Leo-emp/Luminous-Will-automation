@@ -1,19 +1,164 @@
 [
-  {"topic": "Being average is not a choice", "hook": "You were never meant to be average", "angle": "refusing mediocrity as identity", "date": "2026-04-27"},
-  {"topic": "Cheap Dopamine", "hook": "Your brain is being hijacked", "angle": "dopamine addiction destroying potential", "date": "2026-04-27"},
-  {"topic": "Comfort is a threat", "hook": "Comfort is killing your potential", "angle": "comfort zone as silent destroyer", "date": "2026-04-27"},
-  {"topic": "Debt of discipline", "hook": "You owe yourself discipline", "angle": "discipline as debt to future self", "date": "2026-04-27"},
-  {"topic": "Emotional Detachment", "hook": "Stop feeling everything", "angle": "strategic emotional control", "date": "2026-04-27"},
-  {"topic": "Execution matters the most", "hook": "Ideas are worthless without execution", "angle": "execution over planning", "date": "2026-04-27"},
-  {"topic": "Focus on the present", "hook": "You're living in the wrong timeline", "angle": "present moment as only reality", "date": "2026-04-27"},
-  {"topic": "High value solitude", "hook": "If you're always alone, this message is for you", "angle": "loneliness as sign of outgrowing environment", "date": "2026-04-27"},
-  {"topic": "How to achieve flow state", "hook": "The secret state of peak performance", "angle": "flow state as competitive advantage", "date": "2026-04-27"},
-  {"topic": "Human Loyalty", "hook": "Most people are loyal to their needs, not to you", "angle": "transactional nature of loyalty", "date": "2026-04-27"},
-  {"topic": "Master your emotions", "hook": "Your emotions are being used against you", "angle": "emotional mastery as power tool", "date": "2026-04-27"},
-  {"topic": "Power of Silence", "hook": "The most powerful people never raise their voice", "angle": "psychological authority through silence", "date": "2026-04-27"},
-  {"topic": "Procrastination", "hook": "You're not lazy, you're scared", "angle": "procrastination as fear response", "date": "2026-04-27"},
-  {"topic": "Stop waiting too long", "hook": "Time is the one thing you can't get back", "angle": "urgency and mortality awareness", "date": "2026-04-27"},
-  {"topic": "The quiet leader vs the loud victim", "hook": "The loud ones expose everything", "angle": "quiet leadership vs victimhood", "date": "2026-04-27"},
-  {"topic": "Validation", "hook": "You don't need anyone's permission to become great", "angle": "external validation as weakness", "date": "2026-04-27"},
-  {"topic": "Why real life feels boring now", "hook": "Your brain has been rewired", "angle": "dopamine desensitization from content", "date": "2026-04-27"}
+  {
+    "topic": "Being average is not a choice",
+    "hook": "You were never meant to be average",
+    "angle": "refusing mediocrity as identity",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Cheap Dopamine",
+    "hook": "Your brain is being hijacked",
+    "angle": "dopamine addiction destroying potential",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Comfort is a threat",
+    "hook": "Comfort is killing your potential",
+    "angle": "comfort zone as silent destroyer",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Debt of discipline",
+    "hook": "You owe yourself discipline",
+    "angle": "discipline as debt to future self",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Emotional Detachment",
+    "hook": "Stop feeling everything",
+    "angle": "strategic emotional control",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Execution matters the most",
+    "hook": "Ideas are worthless without execution",
+    "angle": "execution over planning",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Focus on the present",
+    "hook": "You're living in the wrong timeline",
+    "angle": "present moment as only reality",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "High value solitude",
+    "hook": "If you're always alone, this message is for you",
+    "angle": "loneliness as sign of outgrowing environment",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "How to achieve flow state",
+    "hook": "The secret state of peak performance",
+    "angle": "flow state as competitive advantage",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Human Loyalty",
+    "hook": "Most people are loyal to their needs, not to you",
+    "angle": "transactional nature of loyalty",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Master your emotions",
+    "hook": "Your emotions are being used against you",
+    "angle": "emotional mastery as power tool",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Power of Silence",
+    "hook": "The most powerful people never raise their voice",
+    "angle": "psychological authority through silence",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Procrastination",
+    "hook": "You're not lazy, you're scared",
+    "angle": "procrastination as fear response",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Stop waiting too long",
+    "hook": "Time is the one thing you can't get back",
+    "angle": "urgency and mortality awareness",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "The quiet leader vs the loud victim",
+    "hook": "The loud ones expose everything",
+    "angle": "quiet leadership vs victimhood",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Validation",
+    "hook": "You don't need anyone's permission to become great",
+    "angle": "external validation as weakness",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Why real life feels boring now",
+    "hook": "Your brain has been rewired",
+    "angle": "dopamine desensitization from content",
+    "date": "2026-04-27"
+  },
+  {
+    "topic": "Psychology of body language and dominance",
+    "hook": "Your weakness screams before you speak.",
+    "angle": "Gemini-generated on 2026-08-31",
+    "date": "2026-08-31"
+  },
+  {
+    "topic": "Why most people will never succeed",
+    "hook": "Your comfort is a cage.",
+    "angle": "Gemini-generated on 2026-09-01",
+    "date": "2026-09-01"
+  },
+  {
+    "topic": "Psychology of self-discipline",
+    "hook": "Your soft choices betray your true will.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "Why high-value people walk alone",
+    "hook": "Your deepest truths scare weak minds.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "The power of walking away",
+    "hook": "Pain holds you captive.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "Why you attract toxic people",
+    "hook": "Their poison thrives on your silent fear.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "Comfort is killing your potential",
+    "hook": "Your comfort is a cage, slowly sealing your fate.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "How narcissists manipulate you",
+    "hook": "Your deep wounds are their perfect weapons.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "How narcissists manipulate you",
+    "hook": "Your empathy becomes their cruelest tool.",
+    "angle": "Gemini-generated on 2026-09-02",
+    "date": "2026-09-02"
+  },
+  {
+    "topic": "The psychology of winning alone",
+    "hook": "Nobody is coming to save your broken life.",
+    "angle": "Gemini-generated on 2026-10-08",
+    "date": "2026-10-08"
+  }
 ]

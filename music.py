@@ -126,6 +126,19 @@ def scan_local_tracks(music_dir=None):
                 if os.path.getsize(path) > 50000:
                     tracks_by_mood["general"].append(path)
 
+    # --- Scan extra folders (e.g. "Music for LW") as general pool ---
+    for subfolder in os.listdir(music_dir):
+        sub_path = os.path.join(music_dir, subfolder)
+        if not os.path.isdir(sub_path):
+            continue
+        if subfolder.lower() in VALID_MOODS or subfolder.lower() == "general" or subfolder.lower() == "beats":
+            continue
+        for f in os.listdir(sub_path):
+            if f.lower().endswith(audio_extensions):
+                path = os.path.join(sub_path, f)
+                if os.path.getsize(path) > 50000:
+                    tracks_by_mood["general"].append(path)
+
     # --- Scan root music dir for tagged and untagged files ---
     for f in os.listdir(music_dir):
         full_path = os.path.join(music_dir, f)

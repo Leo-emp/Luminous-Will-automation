@@ -86,7 +86,7 @@ def upload_file(file_path, folder="videos"):
         if response.status_code in (200, 201):
             result = response.json()
             url = result.get("url", "")
-            print(f"[BLOB] Uploaded: {pathname} → {url}")
+            print(f"[BLOB] Uploaded: {pathname} -> {url}")
             return url
         else:
             print(f"[BLOB] Upload failed ({response.status_code}): {response.text[:200]}")

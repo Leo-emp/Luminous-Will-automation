@@ -7,6 +7,16 @@ from enum import Enum
 # Fill in your API keys in the .env file before running
 # ============================================================
 
+# --- Ensure FFmpeg is on PATH (winget install location) ---
+_ffmpeg_dir = os.path.join(
+    os.environ.get("LOCALAPPDATA", ""),
+    "Microsoft", "WinGet", "Packages",
+    "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe",
+    "ffmpeg-9.0.1-full_build", "bin",
+)
+if os.path.isdir(_ffmpeg_dir) and _ffmpeg_dir not in os.environ.get("PATH", ""):
+    os.environ["PATH"] = _ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
+
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 # --- API Keys (set these in .env file) ---
@@ -62,8 +72,9 @@ FORMAT_PROFILES = {
         "brightness_factor": 0.55,
         "saturation_factor": 0.45,
         # --- Audio mixing (dB-based) ---
-        "voiceover_boost_db": 3.0,           # +3 dB boost — phone-optimized, voice cuts through
-        "music_level_db": -6,                # -6 dB — clearly audible background music
+        "voiceover_boost_db": 16.0,          # +16 dB boost — maximum phone loudness, limiter prevents clipping
+        "music_level_db": 0,                 # 0 dB — full volume music, limiter compresses the mix
+        # 16 dB gap between voice and music — voice dominates, music supports
         # --- Ken Burns ---
         "ken_burns_enabled": True,           # global toggle for motion effects
         # --- Transitions ---
