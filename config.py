@@ -66,7 +66,7 @@ FORMAT_PROFILES = {
         "duration_range": (60, 90),
         # --- Captions ---
         "caption_font_size": 65,
-        "caption_position_y": 0.60,
+        "caption_position_y": 0.50,
         "caption_stroke_width": 2,
         # --- Color grading ---
         "brightness_factor": 0.55,
